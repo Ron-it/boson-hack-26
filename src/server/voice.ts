@@ -29,6 +29,23 @@ const tools = [
   { type: 'function', name: 'stop_phone_task', description: 'Stop scheduling phone actions.', parameters: { type: 'object', properties: {}, additionalProperties: false } },
 ];
 
+export const bosonSessionConfiguration = {
+  model: 'higgs-realtime-1.5-preview', instructions, output_modalities: ['audio'], tools, tool_choice: 'auto',
+  audio: {
+    input: { format: { type: 'audio/pcm', rate: 24000 }, turn_detection: { type: 'server_vad', silence_duration_ms: 450 }, transcription: { model: 'higgs-stt-3.1' } },
+    output: { format: { type: 'audio/pcm', rate: 24000 }, voice: 'default' },
+  },
+};
+
+export const bosonRealtimeUrl = `wss://api.boson.ai/v1/realtime?model=${bosonSessionConfiguration.model}`;
+
+export function completionResponse(status: TaskStatus) {
+  return { type: 'response.create', response: {
+    // Boson replaces the instructions for this response, so retain the session constraints.
+    instructions: `${instructions}\n\nPhone task update for ${JSON.stringify(status.goal)}: ${status.state}. ${status.detail}. Briefly report only the observed outcome.`,
+  } };
+}
+
 export class VoiceSession {
   private boson: WebSocket;
   private task: PhoneTask;
@@ -54,14 +71,8 @@ export class VoiceSession {
     const key = environment.BOSON_API_KEY;
     if (!key) throw new Error('Boson key is not configured on the server');
     this.task = new PhoneTask(device.phone, status => this.onTaskStatus(status), environment);
-    this.boson = new WebSocket('wss://api.boson.ai/v1/realtime?model=higgs-realtime', { headers: { Authorization: `Bearer ${key}` } });
-    this.boson.on('open', () => this.sendBoson({ type: 'session.update', session: {
-      model: 'higgs-realtime', instructions, output_modalities: ['audio'], tools, tool_choice: 'auto',
-      audio: {
-        input: { format: { type: 'audio/pcm', rate: 24000 }, turn_detection: { type: 'server_vad', silence_duration_ms: 450 }, transcription: { model: 'higgs-stt-3.1' } },
-        output: { format: { type: 'audio/pcm', rate: 24000 }, voice: 'default' },
-      },
-    } }));
+    this.boson = new WebSocket(bosonRealtimeUrl, { headers: { Authorization: `Bearer ${key}` } });
+    this.boson.on('open', () => this.sendBoson({ type: 'session.update', session: bosonSessionConfiguration }));
     this.boson.on('message', data => {
       try { this.onBosonEvent(eventSchema.parse(JSON.parse(data.toString()))); }
       catch { this.sendApp({ type: 'notice', message: 'An unexpected voice event was ignored.' }); }
@@ -214,8 +225,7 @@ export class VoiceSession {
     }
     const status = this.pendingAnnouncement;
     this.pendingAnnouncement = undefined;
-    this.sendBoson({ type: 'conversation.item.create', item: { type: 'message', role: 'system', content: [{ type: 'input_text', text: `Phone task update for ${JSON.stringify(status.goal)}: ${status.state}. ${status.detail}. Briefly report only the observed outcome.` }] } });
     this.responseActive = true;
-    this.sendBoson({ type: 'response.create' });
+    this.sendBoson(completionResponse(status));
   }
 }
