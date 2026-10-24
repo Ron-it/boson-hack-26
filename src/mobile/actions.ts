@@ -51,12 +51,14 @@ export async function readStableScreen(portal: PhoneControl, signal: AbortSignal
 
 export function actionCandidates(observation: PhoneObservation): ActionCandidate[] {
   const candidates: ActionCandidate[] = [];
-  for (const element of observation.elements) {
+  // Without display geometry, coordinates cannot be validated; only non-positional actions remain.
+  const screen = observation.screen;
+  if (screen) for (const element of observation.elements) {
     if (!element.enabled) continue;
     const left = Math.max(0, element.bounds.left);
-    const right = Math.min(observation.screen.width, element.bounds.right);
+    const right = Math.min(screen.width, element.bounds.right);
     const top = Math.max(0, element.bounds.top);
-    const bottom = Math.min(observation.screen.height, element.bounds.bottom);
+    const bottom = Math.min(screen.height, element.bounds.bottom);
     if (right <= left || bottom <= top) continue;
 
     const x = Math.round((left + right) / 2);
@@ -79,10 +81,10 @@ export function actionCandidates(observation: PhoneObservation): ActionCandidate
     }
   }
 
-  if (observation.elements.some(element => element.scrollable)) {
-    const x = Math.round(observation.screen.width / 2);
-    const upper = Math.round(observation.screen.height * 0.3);
-    const lower = Math.round(observation.screen.height * 0.8);
+  if (screen && observation.elements.some(element => element.scrollable)) {
+    const x = Math.round(screen.width / 2);
+    const upper = Math.round(screen.height * 0.3);
+    const lower = Math.round(screen.height * 0.8);
     if (observation.elements.some(element => element.scrollDirections.down)) {
       candidates.push({ id: 'scroll_down', description: 'Scroll down to controls below the viewport.', action: { type: 'swipe', startX: x, startY: lower, endX: x, endY: upper } });
     }

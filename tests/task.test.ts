@@ -8,7 +8,8 @@ test('speaking invalidates a pending decision even when its provider ignores can
   const decision = Promise.withResolvers<{ actionId: string; confidence: null; returnedModel: null }>();
   const observation: PhoneObservation = {
     app: { currentApp: 'Settings', packageName: 'com.android.settings', activityName: '' },
-    rootPackage: 'com.android.settings', screen: { width: 1080, height: 2400 }, elements: [],
+    rootPackage: 'com.android.settings', rootBounds: { left: 0, top: 0, right: 1080, bottom: 2400 },
+    screen: { width: 1080, height: 2400, source: 'display' }, elements: [],
   };
   let mutations = 0;
   const mutate = async () => { mutations++; };
