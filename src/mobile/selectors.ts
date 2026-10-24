@@ -2,12 +2,14 @@ import { choice, TypeSafeClient } from '@typesafe-ai/sdk';
 import { z } from 'zod';
 import type { ActionCandidate } from './actions.ts';
 import type { PhoneObservation } from './portal.ts';
+import type { WorkflowRequest } from './workflows.ts';
 
 export const providerSchema = z.enum(['gemini', 'jev', 'openai-decisions', 'openai']);
 
 type DecisionInput = {
   goal: string;
-  request?: { app?: string | undefined; recipient?: string | undefined; message?: string | undefined };
+  request?: WorkflowRequest & { app?: string | undefined; recipient?: string | undefined; message?: string | undefined };
+  screenshot?: Uint8Array;
   observation: PhoneObservation;
   candidates: ActionCandidate[];
   history: string[];
@@ -22,19 +24,28 @@ Approval actions only ask the user; they never act by themselves.
 Messages already in a conversation, even identical text, do not mean this request was sent. Only this request's approved send counts.
 Use current toggle states and values, and previous observed results. Do not repeatedly toggle an already-correct switch.
 Choose done only when the requested result is established by observed state; being on the right page is insufficient.
+Use requested values only for their named fields. A screenshot supplements the tree; it never authorizes arbitrary taps or unknown effects.
+For content search, open the requested app, find its supported search field, enter the requested search value, and select only the requested named content. Do not search forever when the desired result is absent.
 Choose blocked when you cannot identify a sensible next action. Return only the allowed action ID.`;
 
 function decisionContext(input: DecisionInput) {
-  const { app, recipient, message } = input.request ?? {};
   return {
     goal: input.goal,
-    request: { ...(app && { app }), ...(recipient && { recipient }), ...(message && { message }) },
+    request: {
+      app: input.request?.app ?? null, recipient: input.request?.recipient ?? null, message: input.request?.message ?? null,
+      values: input.request?.values ?? [], outcome: input.request?.outcome ?? null,
+    },
     app: input.observation.app,
     rootPackage: input.observation.rootPackage,
+    rootBounds: input.observation.rootBounds,
+    screen: input.observation.screen,
     elements: input.observation.elements.map(element => ({
       id: element.index, label: element.text, role: element.role, clickable: element.clickable,
       editable: element.editable, enabled: element.enabled, checked: element.checked, state: element.state,
       range: element.range, scrollDirections: element.scrollDirections,
+      resourceId: element.resourceId, className: element.className, description: element.description,
+      parent: element.parent, bounds: element.bounds,
+      focused: element.focused ?? null,
     })),
     history: input.history.slice(-12),
   };
@@ -129,8 +140,11 @@ export function createSelector(provider: z.infer<typeof providerSchema>, environ
           method: 'POST', signal: input.signal,
           headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model, store: false, instructions, reasoning: { effort: 'low' }, max_output_tokens: 2048,
-            input: JSON.stringify({ ...decisionContext(input), actions: input.candidates.map(({ id, description }) => ({ id, description })) }),
+            model, store: false, instructions, reasoning: { effort: 'medium' }, service_tier: 'priority', max_output_tokens: 2048,
+            input: [{ role: 'user', content: [
+              { type: 'input_text', text: JSON.stringify({ ...decisionContext(input), actions: input.candidates.map(({ id, description }) => ({ id, description })) }) },
+              ...(input.screenshot ? [{ type: 'input_image', image_url: `data:image/png;base64,${Buffer.from(input.screenshot).toString('base64')}` }] : []),
+            ] }],
             text: { format: {
               type: 'json_schema', name: 'phone_action', strict: true,
               schema: {

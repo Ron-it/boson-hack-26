@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { actionCandidates, assertSettingsScreen, executeAction, readStableScreen, screenFingerprint, type ActionCandidate } from '../mobile/actions.ts';
+import { actionCandidates, assertSettingsScreen, executeAction, readStableScreen, progressFingerprint, targetIsCurrent, type ActionCandidate } from '../mobile/actions.ts';
 import { z } from 'zod';
 import type { PhoneControl, PhoneObservation } from '../mobile/portal.ts';
 import { createSelector } from '../mobile/selectors.ts';
 import { capabilityFor, type Outgoing } from '../mobile/capabilities.ts';
+import { workflowRequestSchema, type ContentSelection } from '../mobile/workflows.ts';
 
 /** What the user is asked to approve. Approval applies once, to exactly this payload and request revision. */
 export type Proposal = { id: string; operation: 'send_message'; app: string; recipient: string; message: string };
@@ -12,6 +13,7 @@ export type TaskStatus = { type: 'task'; state: 'paused' | 'working' | 'confirmi
 
 const singleLine = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\r\n]*$/, 'Use a single line');
 export const phoneRequestSchema = z.object({
+  ...workflowRequestSchema.shape,
   instruction: z.string().min(1).max(2000),
   brightness: z.number().min(10).max(100).optional(), nightLight: z.boolean().optional(),
   app: singleLine(80).optional(), recipient: singleLine(120).optional(), message: singleLine(1000).optional(),
@@ -174,8 +176,7 @@ export class PhoneTask {
       try { await work(revision, abort.signal); }
       catch (error) {
         if (!abort.signal.aborted && revision === this.revision) {
-          this.active = false;
-          this.emit({ type: 'task', state: 'blocked', goal, detail: error instanceof Error ? error.message : 'Phone task failed', revision });
+          this.finish('blocked', error instanceof Error ? error.message : 'Phone task failed', revision);
         }
       }
     });
@@ -191,6 +192,17 @@ export class PhoneTask {
     // Every screen-affecting operation is inside the same serialized tail.
     const first = await this.phone.state();
     check();
+    for (const value of request.values ?? []) {
+      const source = value.source;
+      if (source.kind === 'screen' && (source.text !== value.text || first.app.packageName !== source.packageName
+        || !first.elements.some(element => element.resourceId === source.resourceId && element.text === source.text))) {
+        this.finish('question', `I can't verify the source for ${value.field}. Please give the text you want me to use.`, revision); return;
+      }
+    }
+    const fields = request.values?.map(value => value.field) ?? [];
+    if (new Set(fields).size !== fields.length) {
+      this.finish('question', 'There is more than one value for the same field. Which text should I use?', revision); return;
+    }
     if (!settings) {
       if (request.message && !request.recipient) { this.finish('question', 'Who should I send it to?', revision); return; }
       if (request.recipient && !request.message) { this.finish('question', `What should the message to ${request.recipient} say?`, revision); return; }
@@ -257,6 +269,7 @@ export class PhoneTask {
       check();
     }
     const history: string[] = [];
+    let selection: ContentSelection | undefined;
     let minimumMs = 120;
     let previous: { id: string; fingerprint: string } | undefined;
     let unchanged = 0;
@@ -265,20 +278,30 @@ export class PhoneTask {
       const observation = await readStableScreen(this.phone, signal, minimumMs);
       if (settings) assertSettingsScreen(observation);
       check();
-      if (previous?.fingerprint === screenFingerprint(observation)) {
+      if (previous?.fingerprint === progressFingerprint(observation)) {
         unchanged++;
         history.push(`No visible change after ${previous.id}; try another sensible action.`);
-        if (unchanged >= 2) throw new Error(settings ? 'No progress. Please reopen Display settings and try again.' : 'No visible progress, so I stopped. Please check the screen.');
+        if (unchanged >= 2) throw new Error(settings ? 'No progress. Please reopen Display settings and try again.'
+          : `No progress in ${observation.app.currentApp} after ${history.at(-2) ?? previous.id}. Please take over, then say continue.`);
       } else unchanged = 0;
       const candidates = actionCandidates(observation, { request, apps });
-      const decision = await this.selector.decide({ goal, request, observation, candidates, history, signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]) });
+      let screenshot: Uint8Array | undefined;
+      if (this.phone.screenshot && observation.elements.filter(element => element.text).length < 3) {
+        try {
+          const bytes = await this.phone.screenshot();
+          if (bytes.length <= 2_000_000) screenshot = bytes;
+          else history.push('Screenshot exceeded the image budget; use the accessibility tree or hand off.');
+        } catch { history.push('Screenshot unavailable; do not guess unseen controls.'); }
+        check();
+      }
+      const decision = await this.selector.decide({ goal, request, observation, candidates, history, ...(screenshot && { screenshot }), signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]) });
       check();
       const candidate = candidates.find(item => item.id === decision.actionId);
       if (!candidate) throw new Error('Invalid phone action; stopped');
       const current = await this.phone.state();
       check();
       if (settings) assertSettingsScreen(current);
-      if (screenFingerprint(current) !== screenFingerprint(observation)) {
+      if (!targetIsCurrent(candidate, observation, current, { request, apps })) {
         history.push('Screen changed. Discarded the pending action and observed again.');
         continue;
       }
@@ -298,6 +321,8 @@ export class PhoneTask {
       if (ambiguous) { this.finish('question', `Which ${request.recipient} do you mean: ${ambiguous.join(' or ')}?`, revision); return; }
       if (!settings && (candidate.action.type === 'done' || candidate.action.type === 'blocked')) {
         if (candidate.action.type === 'done' && !request.message) {
+          const evidence = capabilityFor(current)?.outcome?.(current, request, selection);
+          if (evidence) { this.finish('completed', evidence.detail, revision); return; }
           // No supported check establishes this outcome, so it is not reported as completed.
           this.finish('unknown', `I stopped in ${app}, but I can't check that it's done. Please have a look.`, revision); return;
         }
@@ -319,12 +344,22 @@ export class PhoneTask {
       }
       this.emit({ type: 'task', state: 'working', goal, detail: candidate.description, revision });
       check();
-      try { await executeAction(this.phone, candidate); }
+      try { await executeAction(this.phone, candidate, async () => {
+        check();
+        const focused = await this.phone.state();
+        check();
+        if (!targetIsCurrent(candidate, current, focused, { request, apps })) throw new Error('The input target changed while focusing it.');
+        const field = focused.elements.find(element => candidate.element?.resourceId === element.resourceId
+          && candidate.element?.bounds.left === element.bounds.left && candidate.element?.bounds.top === element.bounds.top);
+        if (field?.focused === false) throw new Error('The input field does not have keyboard focus.');
+      }); }
       catch { check(); this.finish('unknown', 'Phone action outcome is unknown. Say continue to inspect before acting again.', revision); return; }
       check();
+      if (candidate.action.type !== 'wait') selection = candidate.effect?.kind === 'open_content'
+        ? { packageName: current.app.packageName, name: candidate.effect.name, viewer: candidate.effect.viewer } : undefined;
       if (settings) history.push(`Observed: ${JSON.stringify(observation.elements.filter(item => item.checked !== null || item.range).map(item => ({ label: item.text, checked: item.checked, range: item.range })))}`);
       history.push(candidate.description);
-      previous = { id: candidate.id, fingerprint: screenFingerprint(observation) };
+      previous = { id: candidate.id, fingerprint: progressFingerprint(observation) };
       minimumMs = candidate.action.type === 'swipe' || candidate.action.type === 'launch' ? 350 : 120;
     }
     throw new Error('Task reached the action limit; stopped');
@@ -408,6 +443,7 @@ export class PhoneTask {
 
   private finish(state: TaskStatus['state'], detail: string, revision: number, proposal?: Proposal) {
     this.active = false;
+    if (state === 'blocked') this.explicitlyPaused = true;
     this.emit({ type: 'task', state, goal: this.goal, detail, revision, ...(proposal && { proposal }) });
   }
 

@@ -8,7 +8,7 @@ const replySchema = z.object({ id: z.string(), status: z.string(), result: z.unk
 /** One connection owns its pending requests. A disconnected mutation is never replayed. */
 export class DeviceConnection {
   private pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
-  /** Undefined until captured once; null when capture failed, so state reads do not keep paying for it. */
+  /** Geometry is refreshed for every observation, including dialogs that fit an obsolete orientation. */
   private display: DisplaySize | null | undefined;
   readonly phone: PhoneControl & ScreenReader;
   readonly socket: WebSocket;
@@ -20,11 +20,6 @@ export class DeviceConnection {
     this.phone = {
       state: async () => {
         const raw = await this.request('state', { filter: true });
-        const observation = parseObservation(raw, this.display ?? null);
-        const root = observation.rootBounds;
-        // A window outside the known display means rotation or a stale size; capture again.
-        const fits = this.display && root.right <= this.display.width && root.bottom <= this.display.height;
-        if (this.display === null || fits) return observation;
         await this.capture().catch(() => { this.display = null; });
         return parseObservation(raw, this.display ?? null);
       },

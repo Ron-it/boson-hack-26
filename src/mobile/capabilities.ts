@@ -1,4 +1,5 @@
 import type { PhoneObservation } from './portal.ts';
+import type { ContentSelection, OutcomeEvidence, WorkflowRequest } from './workflows.ts';
 
 type Element = PhoneObservation['elements'][number];
 
@@ -9,7 +10,8 @@ type Element = PhoneObservation['elements'][number];
 export type Effect =
   | { kind: 'navigate' }
   | { kind: 'pick_contact'; name: string }
-  | { kind: 'enter'; field: 'recipient' | 'message' }
+  | { kind: 'enter'; field: string }
+  | { kind: 'open_content'; name: string; viewer: 'image' }
   | { kind: 'send_message' };
 
 /** An outgoing message the app shows, with the delivery state it displays. */
@@ -24,6 +26,7 @@ export type AppCapability = {
   effect(element: Element, observation: PhoneObservation): Effect | undefined;
   /** Outgoing messages on screen, when the app supports sending. */
   outgoing?(observation: PhoneObservation): Outgoing[];
+  outcome?(observation: PhoneObservation, request: WorkflowRequest, selection?: ContentSelection): OutcomeEvidence | undefined;
 };
 
 const resourceName = (element: Element) => element.resourceId.slice(element.resourceId.indexOf('/') + 1);
@@ -75,9 +78,50 @@ const brightnessDialog: AppCapability = {
   effect: element => element.enabled && element.range && element.resourceId === 'com.android.systemui:id/slider' ? { kind: 'navigate' } : undefined,
 };
 
-const capabilities = new Map([googleMessages, settings, brightnessDialog].map(capability => [capability.packageName, capability]));
+/** DocumentsUI's search filters locally as text changes. No Enter, submit, provider write or file deletion is exposed. */
+function files(packageName: string): AppCapability {
+  const owns = (element: Element, id: string) => element.resourceId === `${packageName}:id/${id}`;
+  const images = (observation: PhoneObservation) => observation.elements.filter(element => owns(element, 'item_root') && element.clickable)
+    .flatMap(row => observation.elements.filter(child => child.parent === row.index && child.resourceId === 'android:id/title' && /\.(png|jpe?g|webp|gif)$/i.test(child.text))
+      .map(child => ({ row, name: child.text })));
+  return {
+    packageName,
+    effect(element, observation) {
+      if (!element.enabled) return undefined;
+      if (element.editable && owns(element, 'search_src_text')) return { kind: 'enter', field: 'search' };
+      if (element.clickable && owns(element, 'option_menu_search') && element.text === 'Search') return { kind: 'navigate' };
+      const image = images(observation).find(image => image.row.index === element.index);
+      if (image) return { kind: 'open_content', name: image.name, viewer: 'image' };
+      // Category filters are controls in this installed app, not a global label-based tap policy.
+      if (element.clickable && element.role === 'Button' && ['Images', 'Audio', 'Videos', 'Documents'].includes(element.text)) return { kind: 'navigate' };
+      return undefined;
+    },
+    outcome(observation, request) {
+      if (request.outcome?.kind !== 'search_results') return undefined;
+      const query = request.outcome.query;
+      if (!observation.elements.some(element => owns(element, 'search_src_text') && element.editable && element.text === query)) return undefined;
+      const names = images(observation).map(image => image.name).filter(name => name.toLowerCase().includes(query.toLowerCase()));
+      if (!names.length) return undefined;
+      return { kind: 'search_results', packageName, detail: `Files search ${JSON.stringify(query)} shows ${names.slice(0, 3).join(', ')}.` };
+    },
+  };
+}
+
+/** External image viewer observed when Files opens a PNG; its Share/overflow controls remain unsupported. */
+const photosViewer: AppCapability = {
+  packageName: 'com.google.android.apps.photos',
+  effect: () => undefined,
+  outcome(observation, request, selection) {
+    if (request.outcome?.kind !== 'content_opened' || selection?.name !== request.outcome.name || selection.viewer !== 'image') return undefined;
+    if (!observation.elements.some(element => element.resourceId === 'com.google.android.apps.photos:id/photos_photofragment_components_background_photo_view' && element.role === 'ImageView' && /^Photo taken on /.test(element.description))) return undefined;
+    return { kind: 'content_opened', packageName: observation.app.packageName, detail: `Opened the selected ${JSON.stringify(selection.name)} in the photo viewer.` };
+  },
+};
+
+const capabilities = new Map([googleMessages, settings, brightnessDialog, files('com.google.android.documentsui'), files('com.android.documentsui'), photosViewer].map(capability => [capability.packageName, capability]));
 
 /** The supported controls of the foreground app, or undefined when none are understood. */
 export function capabilityFor(observation: PhoneObservation) {
-  return capabilities.get(observation.rootPackage) ?? capabilities.get(observation.app.packageName);
+  // A foreign dialog must not inherit the underlying app's privileges.
+  return capabilities.get(observation.rootPackage);
 }
