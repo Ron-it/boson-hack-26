@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { actionCandidates, screenFingerprint } from '../src/mobile/actions.ts';
+import { actionCandidates } from '../src/mobile/actions.ts';
 import { parseObservation } from '../src/mobile/portal.ts';
 
 function view(overrides: Record<string, unknown> = {}) {
@@ -54,5 +54,5 @@ test('the model action menu carries the native state of a preference row with an
     }
     assert.equal(observation.app.currentApp, 'com.android.settings');
   }
-  assert.notEqual(screenFingerprint(off), screenFingerprint(on));
+  assert.notEqual(JSON.stringify(off), JSON.stringify(on));
 });

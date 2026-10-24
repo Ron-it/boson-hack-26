@@ -13,6 +13,12 @@ export type Portal = (method: string, params: Record<string, unknown>) => unknow
 
 const outputSchema = z.object({ type: z.literal('conversation.item.create'), item: z.object({ call_id: z.string(), output: z.string() }) });
 
+const quietNode = { resourceId: '', className: 'android.widget.FrameLayout', packageName: 'com.example.launcher', text: '', contentDescription: '', stateDescription: '', boundsInScreen: { left: 0, top: 0, right: 1080, bottom: 2400 }, isClickable: false, isCheckable: false, isChecked: false, isEnabled: true, isVisibleToUser: true, isScrollable: false, isEditable: false, isPassword: false, actionList: [], children: [] };
+/** A Portal showing one quiet home screen, for voice journeys whose phone work is native or blocked. */
+export const quietScreen: Portal = method => method === 'state' ? { a11y_tree: quietNode, phone_state: { currentApp: 'Launcher', packageName: 'com.example.launcher', activityName: 'Home' } } : {};
+/** A screen model that sets media volume natively in one step, standing in for any quick native request. */
+export const mediaVolume = (percent = 40) => ({ decide: async () => ({ actionId: 'set_media_volume', text: null, value: percent, finish: true, confidence: null, returnedModel: null }) });
+
 export async function harness(portal: Portal, options: { describeScreen?: ScreenDescriber | null; selector?: Pick<ReturnType<typeof createSelector>, 'decide'>; holdResponses?: boolean; responseDeadlineMs?: number; native?: (name: string, args: Record<string, unknown>) => unknown | Promise<unknown> } = {}) {
   const server = new WebSocketServer({ port: 0 });
   await once(server, 'listening');
@@ -80,7 +86,7 @@ export async function harness(portal: Portal, options: { describeScreen?: Screen
     const callId = `call_${++calls}`;
     boson.send(JSON.stringify({ type: 'response.created', response: { id: callId, metadata: null } }));
     boson.send(JSON.stringify({ type: 'response.done', response: { id: callId, status: 'completed', output: [{ type: 'function_call', name, call_id: callId, arguments: JSON.stringify(args) }] } }));
-    for (let waited = 0; waited < 3000; waited += 10) {
+    for (const deadline = performance.now() + 5000; performance.now() < deadline;) {
       const result = outputs.find(item => item.call_id === callId);
       if (result) return result.output;
       await new Promise(resolve => setTimeout(resolve, 10));
@@ -94,8 +100,9 @@ export async function harness(portal: Portal, options: { describeScreen?: Screen
     boson.send(JSON.stringify({ type: 'input_audio_buffer.speech_stopped' }));
   }
 
-  async function until<T>(find: () => T | undefined, what: string, timeout = 5000) {
-    for (let waited = 0; waited < timeout; waited += 10) {
+  /** Waits on wall-clock time, so a slow runner gets the full budget instead of fewer polls. */
+  async function until<T>(find: () => T | undefined, what: string, timeout = 8000) {
+    for (const deadline = performance.now() + timeout; performance.now() < deadline;) {
       const found = find();
       if (found !== undefined) return found;
       await new Promise(resolve => setTimeout(resolve, 10));
@@ -242,7 +249,7 @@ export function messagesApp(options: {
   const phone: PhoneControl = {
     state, tap, typeText: async text => typeText(text),
     launch: async packageName => launch(packageName), packages: async () => packages(),
-    swipe: async () => {}, back: async () => {}, openSettings: async () => {},
+    swipe: async () => {}, back: async () => {},
   };
   /** The same app behind the Portal request protocol, for voice journeys. */
   const portal: Portal = async (method, params) => {

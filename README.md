@@ -103,27 +103,16 @@ Local screenshots, structured records and model traces are in the gitignored
 agent; the later model runs executed without human selection of each action.
 These checks do not establish hands-free correction handling or a no-laptop runtime.
 
-## Model-driven experiment
+## How a request runs
 
-Put available provider keys in the private `.env` file. The default is GPT-6.1
-Sol at low reasoning. See the [comparison and source limits](docs/model-comparison.md).
+Boson hears the user and passes their goal, in their words, to one operator.
 
-```sh
-# Predict one action without changing the phone.
-npm run agent -- "Set brightness to 70%"
+| Work | Done by | Model call |
+| --- | --- | --- |
+| Home, back, recent apps, notifications, quick settings, open an app, open a link | Portal | none |
+| Timers, alarms, exact media volume and brightness | the app's native module (Portal cannot pass intent extras or exact values) | one step, or none when the voice asks for an instant action |
+| Reading the screen, tapping, typing, scrolling, Enter | Portal | GPT-6.1 Sol picks each step |
 
-# Execute a bounded display task from Android Settings.
-npm run agent -- --execute "Turn Night Light on. Leave other settings unchanged."
-
-# Compare the bounded decision-model path.
-npm run agent -- --provider jev "Set brightness to 70%"
-```
-
-The runner offers actions from fresh controls and known bounds. It waits for a
-stable screen, rejects a prediction if the screen changed during inference,
-and stops outside Settings or after repeated actions with no visible progress.
-Ctrl+C stops new actions. An action already dispatched may complete.
-
-Models return `done` or `blocked`; the runner reports that as a claim, not
-independent proof. Check the resulting setting on the phone. `npm test` covers
-the previously missing state of an unlabeled switch inside a clickable row.
+Send, pay, delete and other irreversible taps are asked aloud first. A Google
+Messages send also verifies the sent bubble. `npm run phone` probes Portal
+directly over USB.
