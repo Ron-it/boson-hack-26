@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import WebSocket, { WebSocketServer } from 'ws';
 import { z } from 'zod';
 import { DeviceConnection } from '../src/server/device.ts';
+import type { ScreenDescriber } from '../src/server/help.ts';
 import { VoiceSession } from '../src/server/voice.ts';
 
 type Portal = (method: string, params: Record<string, unknown>) => unknown;
@@ -67,7 +68,7 @@ const sparseScreen = {
 
 const outputSchema = z.object({ type: z.literal('conversation.item.create'), item: z.object({ call_id: z.string(), output: z.string() }) });
 
-async function harness(portal: Portal, options: { describeScreen?: (png: Uint8Array, question: string) => Promise<string> } = {}) {
+async function harness(portal: Portal, options: { describeScreen?: ScreenDescriber | null } = {}) {
   const server = new WebSocketServer({ port: 0 });
   await once(server, 'listening');
   const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -92,8 +93,13 @@ async function harness(portal: Portal, options: { describeScreen?: (png: Uint8Ar
   const appSocket = await appSide;
 
   const bosonSide = nextAccepted();
-  const session = new VoiceSession(appSocket, device, { BOSON_API_KEY: 'test-key' }, { bosonUrl: url, ...options });
-  const boson = await bosonSide;
+  const boson = new WebSocket(url);
+  const session = new VoiceSession(appSocket, device, { BOSON_API_KEY: 'synthetic' }, {
+    voiceSocket: await bosonSide,
+    selector: { decide: async () => ({ actionId: 'blocked', confidence: null, returnedModel: null }) },
+    describeScreen: null, ...options,
+  });
+  await once(boson, 'open');
   const outputs: { call_id: string; output: unknown }[] = [];
   boson.on('message', data => {
     const parsed = outputSchema.safeParse(JSON.parse(data.toString()));
@@ -103,7 +109,8 @@ async function harness(portal: Portal, options: { describeScreen?: (png: Uint8Ar
   let calls = 0;
   async function call(name: string, args: object) {
     const callId = `call_${++calls}`;
-    boson.send(JSON.stringify({ type: 'response.done', response: { status: 'completed', output: [{ type: 'function_call', name, call_id: callId, arguments: JSON.stringify(args) }] } }));
+    boson.send(JSON.stringify({ type: 'response.created', response: { id: callId } }));
+    boson.send(JSON.stringify({ type: 'response.done', response: { id: callId, status: 'completed', output: [{ type: 'function_call', name, call_id: callId, arguments: JSON.stringify(args) }] } }));
     for (let waited = 0; waited < 3000; waited += 10) {
       const result = outputs.find(item => item.call_id === callId);
       if (result) return result.output;
@@ -116,7 +123,7 @@ async function harness(portal: Portal, options: { describeScreen?: (png: Uint8Ar
     call, portalSeen, appEvents,
     async close() {
       session.close();
-      for (const ws of [portalClient, appClient, ...accepted]) ws.terminate();
+      for (const ws of [portalClient, appClient, boson, ...accepted]) ws.terminate();
       server.close();
     },
   };
@@ -134,7 +141,7 @@ test('help with this reads the visible app as untrusted controls without opening
       app: z.string(),
       untrusted: z.string(),
       display: z.object({ width: z.number(), height: z.number() }),
-      controls: z.array(z.looseObject({ label: z.string() })),
+      controls: z.array(z.looseObject({ label: z.string().optional() })),
     }).parse(await phone.call('look_at_screen', { question: 'help me with this' }));
 
     assert.equal(output.app, 'Example Shop');
@@ -146,5 +153,61 @@ test('help with this reads the visible app as untrusted controls without opening
     assert.deepEqual(phone.portalSeen.filter(method => method !== 'state' && method !== 'screenshot'), [], 'Reading help must not mutate the phone');
     assert.equal(phone.appEvents.some(event => event.type === 'command'), false, 'Reading help must not open Display settings');
     assert.ok(phone.appEvents.some(event => event.type === 'help' && event.state === 'observed'));
+  } finally { await phone.close(); }
+});
+
+test('a screen with sparse accessibility is read from a current screenshot through the hosted model', async () => {
+  const shot = png(1080, 2400);
+  const seen: { bytes: number; question: string }[] = [];
+  const phone = await harness(method => {
+    if (method === 'state') return sparseScreen;
+    if (method === 'screenshot') return shot;
+    throw new Error(`Unexpected ${method}`);
+  }, { describeScreen: async (image, context) => { seen.push({ bytes: image.length, question: context.question }); return 'A game board with a Play button at the bottom.'; } });
+  try {
+    const output = z.looseObject({ status: z.literal('observed'), source: z.literal('screenshot'), visual: z.string() })
+      .parse(await phone.call('look_at_screen', { question: 'what do I press?' }));
+    assert.equal(output.visual, 'A game board with a Play button at the bottom.');
+    assert.deepEqual(seen, [{ bytes: Buffer.from(shot, 'base64').length, question: 'what do I press?' }]);
+    assert.ok(phone.appEvents.some(event => event.type === 'help' && event.state === 'observed' && event.detail === 'Read Example Game from a screenshot'));
+  } finally { await phone.close(); }
+});
+
+test('a sparse screen whose capture fails is reported unavailable instead of described', async () => {
+  let described = false;
+  const phone = await harness(method => {
+    if (method === 'state') return sparseScreen;
+    throw new Error('Screenshot not allowed');
+  }, { describeScreen: async () => { described = true; return 'invented'; } });
+  try {
+    const output = z.looseObject({ status: z.literal('unavailable'), reason: z.string() })
+      .parse(await phone.call('look_at_screen', { question: 'help me with this' }));
+    assert.match(output.reason, /capture failed/);
+    assert.equal(described, false);
+    assert.equal('visual' in output, false);
+    assert.ok(phone.appEvents.some(event => event.type === 'help' && event.state === 'unavailable'));
+  } finally { await phone.close(); }
+});
+
+test('guide mode refuses every phone action until the user asks it to act again', async () => {
+  const phone = await harness(method => {
+    if (method === 'state') return returnDialog;
+    if (method === 'screenshot') return png(1080, 2424);
+    throw new Error(`Unexpected ${method}`);
+  });
+  try {
+    assert.deepEqual(await phone.call('set_help_mode', { mode: 'guide' }), { status: 'set', mode: 'guide' });
+    for (const [name, args] of [['update_phone_task', { instruction: 'Turn on Night Light', nightLight: true }], ['set_brightness', { percent: 40 }], ['continue_phone_task', {}]] as const) {
+      const output = z.object({ status: z.literal('blocked'), reason: z.string() }).parse(await phone.call(name, args));
+      assert.match(output.reason, /Guide mode/);
+    }
+    z.looseObject({ status: z.literal('observed'), mode: z.literal('guide') }).parse(await phone.call('look_at_screen', { question: 'show me how to return this' }));
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.deepEqual(phone.portalSeen.filter(method => method !== 'state' && method !== 'screenshot'), []);
+    assert.equal(phone.appEvents.some(event => event.type === 'command' || event.type === 'task'), false, 'No native command or task may start in guide mode');
+    assert.ok(phone.appEvents.some(event => event.type === 'help' && event.mode === 'guide'));
+
+    await phone.call('set_help_mode', { mode: 'do' });
+    z.object({ status: z.literal('accepted') }).loose().parse(await phone.call('update_phone_task', { instruction: 'Turn on Night Light', nightLight: true }));
   } finally { await phone.close(); }
 });
