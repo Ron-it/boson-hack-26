@@ -297,6 +297,9 @@ export class VoiceSession {
         if (this.debug && event.type === 'response.output_audio_transcript.done') console.log('Debug assistant said:', JSON.stringify(event.transcript ?? ''));
         this.sendApp(event);
         return;
+      case 'conversation.item.input_audio_transcription.delta':
+        this.sendApp(event);
+        return;
       case 'conversation.item.input_audio_transcription.completed':
         if (this.debug) console.log('Debug user said:', JSON.stringify(event.transcript ?? ''));
         if (event.transcript) this.heard = { text: event.transcript, speeches: this.speeches };

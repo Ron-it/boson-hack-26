@@ -137,6 +137,7 @@ class VoiceService : Service() {
       "help" -> overlay.update { reading(event.text("state") == "reading") }
       "notice" -> notice(event.text("message"))
       "conversation.item.input_audio_transcription.completed" -> overlay.update { userTranscript(event.text("transcript"), it) }
+      "conversation.item.input_audio_transcription.delta" -> overlay.update { userTranscriptDelta(event.text("delta")) }
       "response.output_audio_transcript.delta" -> if (!rejectedResponses.contains(response)) overlay.update { transcript(response, event.text("delta"), append = true) }
       "response.output_audio_transcript.done" -> if (!rejectedResponses.contains(response)) overlay.update { transcript(response, event.text("transcript"), append = false) }
     }
