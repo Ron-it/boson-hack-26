@@ -204,6 +204,8 @@ export class PhoneTask {
     return this.request ? this.schedule() : Promise.resolve();
   }
 
+  get pausedForManualControl() { return this.explicitlyPaused; }
+
   private schedule(detail = 'Looking at the screen', work = (revision: number, signal: AbortSignal) => this.run(this.goal, revision, signal)) {
     const goal = this.goal;
     this.active = true;
