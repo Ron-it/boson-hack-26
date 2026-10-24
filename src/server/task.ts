@@ -193,7 +193,7 @@ export class PhoneTask {
         }
         const verified = candidate.action.type === 'done' && this.matchesRequest(current, request);
         this.finish(verified ? 'completed' : 'blocked', verified
-          ? `Observed result: ${JSON.stringify({ brightness: this.brightnessEvidence, controls: current.elements.filter(item => item.checked !== null || item.range).map(item => ({ label: item.text, checked: item.checked, range: item.range })) })}`
+          ? `Observed result: ${JSON.stringify({ brightness: request.brightness, nightLight: request.nightLight })}`
           : 'The requested Settings result is not established by observed values.', revision);
         return;
       }
