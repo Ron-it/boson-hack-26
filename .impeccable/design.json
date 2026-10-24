@@ -1,188 +1,265 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-24T01:53:17.414737Z",
-  "title": "Design System: Phone voice",
+  "generatedAt": "2026-10-24T12:47:03+00:00",
+  "title": "Design System: Tandem",
   "extensions": {
     "colorMeta": {
-      "light-surface": {
+      "canvas": {
         "role": "neutral",
-        "displayName": "Light App surface"
+        "displayName": "Canvas"
       },
-      "light-text": {
+      "surface": {
         "role": "neutral",
-        "displayName": "Light Primary text"
+        "displayName": "Surface"
       },
-      "light-secondary": {
+      "raised": {
         "role": "neutral",
-        "displayName": "Light Supporting text"
+        "displayName": "Raised"
       },
-      "light-primary": {
+      "text": {
+        "role": "neutral",
+        "displayName": "Text"
+      },
+      "strong": {
+        "role": "neutral",
+        "displayName": "Strong"
+      },
+      "secondary": {
+        "role": "neutral",
+        "displayName": "Secondary"
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted"
+      },
+      "control-border": {
+        "role": "neutral",
+        "displayName": "Control Border"
+      },
+      "accent": {
         "role": "primary",
-        "displayName": "Light Action green"
+        "displayName": "Signal Green"
       },
-      "light-on-primary": {
+      "accent-pressed": {
         "role": "primary",
-        "displayName": "Light Text on action"
+        "displayName": "Pressed Green"
       },
-      "light-input": {
-        "role": "neutral",
-        "displayName": "Light Input fill"
-      },
-      "light-error": {
-        "role": "neutral",
-        "displayName": "Light Error text"
-      },
-      "dark-surface": {
-        "role": "neutral",
-        "displayName": "Dark App surface"
-      },
-      "dark-text": {
-        "role": "neutral",
-        "displayName": "Dark Primary text"
-      },
-      "dark-secondary": {
-        "role": "neutral",
-        "displayName": "Dark Supporting text"
-      },
-      "dark-primary": {
+      "on-accent": {
         "role": "primary",
-        "displayName": "Dark Action green"
+        "displayName": "Ink on Green"
       },
-      "dark-on-primary": {
-        "role": "primary",
-        "displayName": "Dark Text on action"
+      "green-soft": {
+        "role": "secondary",
+        "displayName": "Sage"
       },
-      "dark-input": {
+      "error": {
         "role": "neutral",
-        "displayName": "Dark Input fill"
-      },
-      "dark-error": {
-        "role": "neutral",
-        "displayName": "Dark Error text"
+        "displayName": "Error"
       }
     },
     "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Home question."
+      },
       "headline": {
         "displayName": "Headline",
-        "purpose": "Current session state."
+        "purpose": "Live screen headline."
       },
-      "title": {
-        "displayName": "Title",
-        "purpose": "App title."
+      "wordmark": {
+        "displayName": "Wordmark",
+        "purpose": "Top bar wordmark and Settings title."
       },
-      "body": {
-        "displayName": "Body",
-        "purpose": "Instructions, request, progress, transcript, and errors."
+      "lead": {
+        "displayName": "Lead",
+        "purpose": "Line under the home question."
       },
-      "supporting": {
-        "displayName": "Supporting",
-        "purpose": "Short introductory sentence."
+      "quote": {
+        "displayName": "Quote",
+        "purpose": "Message text in the confirmation quote."
       },
       "button": {
         "displayName": "Button",
-        "purpose": "Primary and text action labels."
+        "purpose": "Full-width button labels."
       },
-      "label": {
-        "displayName": "Label",
-        "purpose": "Field and content identifiers."
+      "body": {
+        "displayName": "Body",
+        "purpose": "Task detail, spoken instructions, replies, errors."
       },
-      "caption": {
-        "displayName": "Caption",
-        "purpose": "Audio and agent disclosure."
+      "status": {
+        "displayName": "Status",
+        "purpose": "Live task state line, colored by state."
+      },
+      "tab": {
+        "displayName": "Tab",
+        "purpose": "Preset tab names."
       },
       "input": {
         "displayName": "Input",
-        "purpose": "Connection field values; native line metrics."
+        "purpose": "Connection field values."
+      },
+      "hint": {
+        "displayName": "Hint",
+        "purpose": "Selected preset description."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Section labels and the Tandem reply label."
+      },
+      "detail": {
+        "displayName": "Detail",
+        "purpose": "Row details, quote meta, field labels."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Line under the main button and the about line."
       }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "none",
+        "value": "none",
+        "purpose": "No continuous or decorative animation. State changes are instant color swaps on press and focus."
+      }
+    ],
+    "mark": {
+      "viewBox": "0 0 108 108",
+      "lockupViewBox": "28 28 52 52",
+      "dot": {
+        "cx": 44,
+        "cy": 54,
+        "r": 11,
+        "color": "strong"
+      },
+      "arc": {
+        "d": "M60.7 34.1 A26 26 0 0 1 60.7 73.9",
+        "strokeWidth": 10,
+        "strokeLinecap": "round",
+        "color": "accent"
+      },
+      "notificationIcon": "mobile/modules/boson-audio/android/src/main/res/drawable/ic_tandem.xml"
+    },
+    "sources": {
+      "code": "mobile/App.tsx",
+      "config": "mobile/app.json",
+      "paper": "https://app.paper.design/file/01M5B4ADQSXTWS4JWY87EBYE4C/p-5-0",
+      "captured": [
+        ".impeccable/review/tandem-emulator-5554.png",
+        ".impeccable/review/tandem-settings.png",
+        ".impeccable/review/tandem-large.png"
+      ],
+      "notCaptured": [
+        "Live",
+        "Working",
+        "Confirm"
+      ]
     }
   },
   "components": [
     {
-      "name": "Light Primary Button",
+      "name": "Primary Button",
       "kind": "button",
-      "refersTo": "button-primary-light",
-      "description": "Start/Stop action. Native minimum height and content growth are preserved; opacity changes on press or when unconfigured. Browser focus outline is a preview adapter.",
-      "html": "<div class=\"ds-light-surface\"><button class=\"ds-light-primary\">Start listening</button></div>",
-      "css": ".ds-light-surface { background: #F4F8F5; color: #142D28; padding: 24px; font-family: system-ui, sans-serif; } .ds-light-primary { width: 100%; box-sizing: border-box; min-height: 56px; margin-top: 12px; padding: 16px 24px; display: flex; justify-content: center; align-items: center; border: 0; border-radius: 8px; background: #006B55; color: #FFFFFF; font: 600 16px/24px system-ui, sans-serif; } .ds-light-primary:hover { background: #006B55; } .ds-light-primary:focus-visible { outline: auto; } .ds-light-primary:active { opacity: 0.75; } .ds-light-primary:disabled { opacity: 0.45; }"
+      "refersTo": "button-primary",
+      "description": "The one full-width action at the bottom of Home. Start talking, or Pair this phone when unpaired.",
+      "html": "<div class=\"ds-canvas\"><button class=\"ds-btn-primary\"><svg width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#0D1012\" stroke-width=\"2\" stroke-linecap=\"round\"><rect x=\"9\" y=\"3\" width=\"6\" height=\"11\" rx=\"3\"/><path d=\"M5 11a7 7 0 0 0 14 0M12 18v3\"/></svg>Start talking</button><p class=\"ds-caption\">Tandem only looks at your screen when you ask.</p></div>",
+      "css": ".ds-canvas { background: #0D1012; color: #EFF0F0; padding: 24px; font-family: 'Instrument Sans', system-ui, sans-serif; } .ds-btn-primary { width: 100%; min-height: 64px; border: 0; border-radius: 12px; padding: 0 24px; display: flex; align-items: center; justify-content: center; gap: 10px; font: 600 18px 'Instrument Sans', system-ui, sans-serif; background: #2BCB3A; color: #0D1012; } .ds-btn-primary:hover { background: #2BCB3A; } .ds-btn-primary:active { background: #21B82F; } .ds-btn-primary:focus-visible { outline: 2px solid #F4F5F5; outline-offset: 2px; } .ds-btn-primary:disabled { opacity: 0.4; } .ds-caption { margin: 16px 0 0; text-align: center; color: #999B9C; font-size: 13px; line-height: 18px; }"
     },
     {
-      "name": "Light Text Button",
+      "name": "Stop Button",
       "kind": "button",
-      "refersTo": "button-text-light",
-      "description": "Plain permission or connection action. No custom native pressed or hover treatment; browser focus outline is a preview adapter.",
-      "html": "<div class=\"ds-light-surface\"><button class=\"ds-light-text\">Connection settings</button></div>",
-      "css": ".ds-light-surface { background: #F4F8F5; color: #142D28; padding: 24px; font-family: system-ui, sans-serif; } .ds-light-text { width: 100%; min-height: 48px; padding: 12px 0; display: flex; align-items: center; text-align: left; border: 0; background: transparent; color: #006B55; font: 600 16px/24px system-ui, sans-serif; } .ds-light-text:hover { background: transparent; } .ds-light-text:focus-visible { outline: auto; }"
+      "refersTo": "button-neutral",
+      "description": "Neutral full-width action on Live. Raised fill, never green or red.",
+      "html": "<div class=\"ds-canvas\"><button class=\"ds-btn-neutral\"><span class=\"ds-stop\"></span>Stop</button></div>",
+      "css": ".ds-canvas { background: #0D1012; color: #EFF0F0; padding: 24px; font-family: 'Instrument Sans', system-ui, sans-serif; } .ds-btn-neutral { width: 100%; min-height: 64px; border: 0; border-radius: 12px; padding: 0 24px; display: flex; align-items: center; justify-content: center; gap: 10px; font: 600 18px 'Instrument Sans', system-ui, sans-serif; background: #1C2022; color: #F4F5F5; } .ds-btn-neutral:hover { background: #1C2022; } .ds-btn-neutral:active { background: #161819; } .ds-btn-neutral:focus-visible { outline: 2px solid #F4F5F5; outline-offset: 2px; } .ds-stop { width: 14px; height: 14px; border-radius: 3px; background: #EFF0F0; }"
     },
     {
-      "name": "Light Input Field",
+      "name": "Preset Tabs",
+      "kind": "nav",
+      "refersTo": "preset-tab",
+      "description": "Text tabs with a 2px green underline on the selected preset, and a hint below. Not pills.",
+      "html": "<div class=\"ds-canvas\"><div class=\"ds-tabs\" role=\"radiogroup\"><button class=\"ds-tab\" aria-checked=\"true\" role=\"radio\">Quick</button><button class=\"ds-tab\" role=\"radio\" aria-checked=\"false\">Family</button><button class=\"ds-tab\" role=\"radio\" aria-checked=\"false\">Hands-free</button></div><p class=\"ds-hint\">Short answers. Gets it done fast.</p></div>",
+      "css": ".ds-canvas { background: #0D1012; color: #EFF0F0; padding: 24px; font-family: 'Instrument Sans', system-ui, sans-serif; } .ds-tabs { display: flex; gap: 28px; } .ds-tab { min-height: 48px; padding: 0; background: none; border: 0; border-bottom: 2px solid transparent; color: #999B9C; font: 500 17px 'Instrument Sans', system-ui, sans-serif; cursor: pointer; } .ds-tab:hover { color: #BFC1C2; } .ds-tab:focus-visible { outline: 2px solid #F4F5F5; outline-offset: 2px; } .ds-tab[aria-checked=\"true\"] { color: #F4F5F5; border-bottom-color: #2BCB3A; } .ds-hint { margin: 12px 0 0; color: #BFC1C2; font-size: 15px; line-height: 22px; }"
+    },
+    {
+      "name": "Input Field",
       "kind": "input",
-      "refersTo": "input-light",
-      "description": "Labeled connection field. Native vertical metrics are platform-owned; the preview retains browser defaults. Pairing uses the same styling with masked entry.",
-      "html": "<div class=\"ds-light-surface\"><label class=\"ds-light-input-label\" for=\"ds-light-input-address\">Server address</label><input class=\"ds-light-input\" id=\"ds-light-input-address\" type=\"url\" placeholder=\"https://your-server\" autocapitalize=\"none\" spellcheck=\"false\"></div>",
-      "css": ".ds-light-surface { background: #F4F8F5; color: #142D28; padding: 24px; font-family: system-ui, sans-serif; } .ds-light-input-label { display: block; margin-bottom: 8px; color: #142D28; font: 600 14px/20px system-ui, sans-serif; } .ds-light-input { width: 100%; box-sizing: border-box; min-height: 56px; padding-inline: 16px; border: 0; border-radius: 4px; background: #E4EEE7; color: #142D28; font-family: system-ui, sans-serif; font-size: 16px; } .ds-light-input::placeholder { color: #47645B; opacity: 1; } .ds-light-input:hover { background: #E4EEE7; } .ds-light-input:focus-visible { outline: auto; }"
+      "refersTo": "input",
+      "description": "Outlined connection field. 1px border turns green on focus.",
+      "html": "<div class=\"ds-canvas\"><label class=\"ds-field-label\" for=\"ds-url\">Server address</label><input class=\"ds-input\" id=\"ds-url\" type=\"url\" placeholder=\"https://your-server\" spellcheck=\"false\" autocapitalize=\"none\"></div>",
+      "css": ".ds-canvas { background: #0D1012; color: #EFF0F0; padding: 24px; font-family: 'Instrument Sans', system-ui, sans-serif; } .ds-field-label { display: block; margin-bottom: 8px; color: #BFC1C2; font-size: 14px; line-height: 20px; } .ds-input { width: 100%; box-sizing: border-box; min-height: 56px; padding: 0 16px; background: transparent; border: 1px solid #60696D; border-radius: 8px; color: #EFF0F0; font: 400 16px 'Instrument Sans', system-ui, sans-serif; caret-color: #2BCB3A; } .ds-input::placeholder { color: #999B9C; } .ds-input:hover { border-color: #60696D; } .ds-input:focus, .ds-input:focus-visible { outline: none; border-color: #2BCB3A; }"
     },
     {
-      "name": "Dark Primary Button",
-      "kind": "button",
-      "refersTo": "button-primary-dark",
-      "description": "Start/Stop action. Native minimum height and content growth are preserved; opacity changes on press or when unconfigured. Browser focus outline is a preview adapter.",
-      "html": "<div class=\"ds-dark-surface\"><button class=\"ds-dark-primary\">Start listening</button></div>",
-      "css": ".ds-dark-surface { background: #10251F; color: #E2F2E7; padding: 24px; font-family: system-ui, sans-serif; } .ds-dark-primary { width: 100%; box-sizing: border-box; min-height: 56px; margin-top: 12px; padding: 16px 24px; display: flex; justify-content: center; align-items: center; border: 0; border-radius: 8px; background: #7BDBB5; color: #00382A; font: 600 16px/24px system-ui, sans-serif; } .ds-dark-primary:hover { background: #7BDBB5; } .ds-dark-primary:focus-visible { outline: auto; } .ds-dark-primary:active { opacity: 0.75; } .ds-dark-primary:disabled { opacity: 0.45; }"
+      "name": "Top Bar",
+      "kind": "nav",
+      "refersTo": "top-bar",
+      "description": "64 tall. Mark and wordmark on the left, 48dp icon button on the right. On Live the icon is replaced by a static green dot and state text.",
+      "html": "<div class=\"ds-canvas ds-pad0\"><div class=\"ds-topbar\"><div class=\"ds-lockup\"><svg class=\"ds-mark\" viewBox=\"28 28 52 52\" width=\"22\" height=\"22\"><circle cx=\"44\" cy=\"54\" r=\"11\" fill=\"#F4F5F5\"/><path d=\"M60.7 34.1 A26 26 0 0 1 60.7 73.9\" fill=\"none\" stroke=\"#2BCB3A\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg><span class=\"ds-wordmark\">Tandem</span></div><button class=\"ds-icon-btn\" aria-label=\"Settings\"><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#BFC1C2\" stroke-width=\"1.75\" stroke-linecap=\"round\"><path d=\"M4 7h10M18 7h2M4 17h2M10 17h10\"/><circle cx=\"16\" cy=\"7\" r=\"2\"/><circle cx=\"8\" cy=\"17\" r=\"2\"/></svg></button></div><div class=\"ds-topbar\"><div class=\"ds-lockup\"><svg class=\"ds-mark\" viewBox=\"28 28 52 52\" width=\"22\" height=\"22\"><circle cx=\"44\" cy=\"54\" r=\"11\" fill=\"#F4F5F5\"/><path d=\"M60.7 34.1 A26 26 0 0 1 60.7 73.9\" fill=\"none\" stroke=\"#2BCB3A\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg><span class=\"ds-wordmark\">Tandem</span></div><div class=\"ds-lockup ds-live\"><span class=\"ds-dot\"></span><span class=\"ds-live-text\">Listening</span></div></div></div>",
+      "css": ".ds-canvas { background: #0D1012; color: #EFF0F0; padding: 24px; font-family: 'Instrument Sans', system-ui, sans-serif; } .ds-pad0 { padding: 0; } .ds-topbar { min-height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px 0 24px; } .ds-lockup { display: flex; align-items: center; gap: 8px; } .ds-wordmark { font-family: Manrope, system-ui, sans-serif; font-weight: 600; font-size: 21px; line-height: 28px; letter-spacing: -0.4px; color: #F4F5F5; } .ds-icon-btn { width: 48px; height: 48px; display: grid; place-items: center; background: none; border: 0; border-radius: 12px; cursor: pointer; } .ds-icon-btn:hover { background: none; } .ds-icon-btn:focus-visible { outline: 2px solid #F4F5F5; } .ds-live { padding-right: 12px; } .ds-dot { width: 8px; height: 8px; border-radius: 4px; background: #2BCB3A; } .ds-live-text { color: #2BCB3A; font-size: 15px; font-weight: 500; }"
     },
     {
-      "name": "Dark Text Button",
-      "kind": "button",
-      "refersTo": "button-text-dark",
-      "description": "Plain permission or connection action. No custom native pressed or hover treatment; browser focus outline is a preview adapter.",
-      "html": "<div class=\"ds-dark-surface\"><button class=\"ds-dark-text\">Connection settings</button></div>",
-      "css": ".ds-dark-surface { background: #10251F; color: #E2F2E7; padding: 24px; font-family: system-ui, sans-serif; } .ds-dark-text { width: 100%; min-height: 48px; padding: 12px 0; display: flex; align-items: center; text-align: left; border: 0; background: transparent; color: #7BDBB5; font: 600 16px/24px system-ui, sans-serif; } .ds-dark-text:hover { background: transparent; } .ds-dark-text:focus-visible { outline: auto; }"
+      "name": "Message Quote",
+      "kind": "card",
+      "refersTo": "message-quote",
+      "description": "The only enclosed block. Shows a message Tandem is about to send, with a spoken yes/no instruction below. Not captured on device.",
+      "html": "<div class=\"ds-canvas\"><h2 class=\"ds-headline\">Send this to Mom?</h2><div class=\"ds-quote\"><span class=\"ds-quote-meta\">WhatsApp · Mom</span><span class=\"ds-quote-text\">Running ten minutes late, start without me.</span></div><p class=\"ds-body\">Say “yes” to send, or “no” to change it.</p></div>",
+      "css": ".ds-canvas { background: #0D1012; color: #EFF0F0; padding: 24px; font-family: 'Instrument Sans', system-ui, sans-serif; } .ds-headline { margin: 0 0 24px; font-family: Manrope, system-ui, sans-serif; font-weight: 500; font-size: 34px; line-height: 42px; letter-spacing: -0.7px; color: #F4F5F5; } .ds-quote { display: flex; flex-direction: column; gap: 8px; padding: 20px; border-radius: 12px; background: #161819; } .ds-quote-meta { color: #999B9C; font-size: 14px; line-height: 20px; } .ds-quote-text { color: #EFF0F0; font-size: 19px; line-height: 28px; } .ds-body { margin: 24px 0 0; color: #BFC1C2; font-size: 17px; line-height: 26px; }"
     },
     {
-      "name": "Dark Input Field",
-      "kind": "input",
-      "refersTo": "input-dark",
-      "description": "Labeled connection field. Native vertical metrics are platform-owned; the preview retains browser defaults. Pairing uses the same styling with masked entry.",
-      "html": "<div class=\"ds-dark-surface\"><label class=\"ds-dark-input-label\" for=\"ds-dark-input-address\">Server address</label><input class=\"ds-dark-input\" id=\"ds-dark-input-address\" type=\"url\" placeholder=\"https://your-server\" autocapitalize=\"none\" spellcheck=\"false\"></div>",
-      "css": ".ds-dark-surface { background: #10251F; color: #E2F2E7; padding: 24px; font-family: system-ui, sans-serif; } .ds-dark-input-label { display: block; margin-bottom: 8px; color: #E2F2E7; font: 600 14px/20px system-ui, sans-serif; } .ds-dark-input { width: 100%; box-sizing: border-box; min-height: 56px; padding-inline: 16px; border: 0; border-radius: 4px; background: #203C31; color: #E2F2E7; font-family: system-ui, sans-serif; font-size: 16px; } .ds-dark-input::placeholder { color: #ADCABB; opacity: 1; } .ds-dark-input:hover { background: #203C31; } .ds-dark-input:focus-visible { outline: auto; }"
+      "name": "Permission Row",
+      "kind": "custom",
+      "refersTo": "permission-row",
+      "description": "Settings row with title, detail, and a trailing On or Turn on state. Sage section label above.",
+      "html": "<div class=\"ds-canvas\"><div class=\"ds-section\">Permissions</div><button class=\"ds-row\"><span class=\"ds-row-copy\"><span class=\"ds-row-title\">Show over other apps</span><span class=\"ds-row-detail\">So you can see Tandem while it works</span></span><span class=\"ds-row-state ds-off\">Turn on</span></button><button class=\"ds-row\"><span class=\"ds-row-copy\"><span class=\"ds-row-title\">Change brightness instantly</span><span class=\"ds-row-detail\">Skips opening Settings for brightness</span></span><span class=\"ds-row-state ds-on\">On</span></button></div>",
+      "css": ".ds-canvas { background: #0D1012; color: #EFF0F0; padding: 24px; font-family: 'Instrument Sans', system-ui, sans-serif; } .ds-section { padding-bottom: 8px; color: #8CC4A4; font-size: 14px; line-height: 20px; font-weight: 600; } .ds-row { width: 100%; min-height: 72px; padding: 8px 0; display: flex; align-items: center; gap: 16px; background: none; border: 0; text-align: left; cursor: pointer; font-family: inherit; } .ds-row:hover { background: none; } .ds-row:focus-visible { outline: 2px solid #F4F5F5; } .ds-row-copy { flex: 1; display: flex; flex-direction: column; gap: 2px; } .ds-row-title { color: #F4F5F5; font-size: 17px; line-height: 24px; } .ds-row-detail { color: #999B9C; font-size: 14px; line-height: 20px; } .ds-row-state { min-width: 72px; text-align: right; font-size: 15px; } .ds-off { color: #2BCB3A; font-weight: 600; } .ds-on { color: #BFC1C2; font-weight: 500; }"
     }
   ],
   "narrative": {
-    "northStar": "Restrained Android utility",
-    "overview": "This is the implemented utility direction from PRODUCT.md, not a final product identity. A flat green surface, plain system text, and a single filled action keep the interface direct. Status and controls carry the visual hierarchy; decoration does not.\n\nThe source of truth is `mobile/App.tsx`. The light, dark, and enlarged-text Pixel captures in `.impeccable/review/` support the visual review disposition of SHIP. They establish the rendered idle interface, not acceptance of live voice, correction timing, or speaker echo cancellation.",
+    "northStar": "Two voices, one thumb",
+    "overview": "Tandem is a near-black, dark-only Android app in the Boson AI design system. Each screen is a quiet canvas with one large question or headline, and every control sits at the bottom near the thumb. Green is rare and means one of two things: the action to take, or a session that is live.\n\nThe mark tells the story. A white dot is you. A signal-green arc beside it is Tandem, listening and answering. The source of truth is `mobile/App.tsx`. The Paper design file is the \"Tandem app\" page in \"Boson AI Design System\" (https://app.paper.design/file/01M5B4ADQSXTWS4JWY87EBYE4C/p-5-0).\n\nRendered evidence in `.impeccable/review/`: home while unpaired (`tandem-emulator-5554.png`), Settings (`tandem-settings.png`), and home at 1.3x font scale (`tandem-large.png`). The Live, Working and Confirm states exist in code but were not captured on a device, because no server was available.",
     "keyCharacteristics": [
-      "One scrolling column with native safe areas and scalable text.",
-      "Coordinated light and dark semantic roles.",
-      "Filled primary action, plain text actions, and tonal input fields.",
-      "Minimal copy, no decorative cards or pills, and no continuous animation."
+      "Dark only. No light scheme.",
+      "Bottom-weighted screens. Content sits low, actions sit lowest.",
+      "Green only for the primary action and a live session.",
+      "Information sits directly on the canvas. The message quote is the only enclosed block.",
+      "No shadows, gradients, section rules, or continuous animation."
     ],
     "rules": [
       {
-        "name": "The Paired Roles Rule",
-        "body": "Switch the complete scheme with the device appearance; retain the matching on-primary text when changing the action fill.",
+        "name": "The Two Greens Rule",
+        "body": "Signal green marks the primary action and a live session. Stop is neutral (raised), never green or red. Anything structural that wants green uses sage.",
         "section": "colors"
       },
       {
-        "name": "The Native Scaling Rule",
-        "body": "Let text wrap and the page scroll as the system text setting grows; the build does not truncate these roles or impose fixed text containers.",
+        "name": "The Scale With The User Rule",
+        "body": "Text follows Android font scale. At 1.3x the home screen still fits, the question wraps and the bottom stack stays intact.",
         "section": "typography"
       },
       {
-        "name": "The Flat Utility Rule",
-        "body": "Separate content with spacing and text hierarchy; preserve the confirmed absence of decorative cards, pills, and section rules.",
+        "name": "The Thumb Rule",
+        "body": "The main area grows and the content falls to the bottom. Never pin content to the top and leave the bottom empty.",
+        "section": "layout"
+      },
+      {
+        "name": "The Open Canvas Rule",
+        "body": "Information sits directly on the canvas. The message quote is the only enclosed block, because it shows words Tandem is about to send for you.",
         "section": "elevation"
       }
     ],
     "dos": [
-      "Do use the complete light or dark role set, including its on-primary text.",
-      "Do preserve native text scaling, wrapping, scrolling, and safe-area padding.",
-      "Do retain minimum touch heights while allowing content to grow.",
-      "Do show status and recoverable errors as readable text."
+      "Do keep one full-width primary action per screen, at the bottom.",
+      "Do use sage for structure and signal green for action or live state.",
+      "Do keep Stop neutral.",
+      "Do ask for confirmation by voice, with a spoken yes/no instruction under the quote.",
+      "Do keep touch targets at 48 or more."
     ],
     "donts": [
-      "Don't add decorative cards, pills, or section rules.",
-      "Don't add continuous animation.",
-      "Don't turn this utility direction into a final brand or audience commitment.",
-      "Don't treat idle screenshots as proof of live voice acceptance."
+      "Don't add a light theme.",
+      "Don't add shadows, gradients, cards, pills, or rules between sections.",
+      "Don't add pulsing, shimmering, or spinning animation, including on the live dot.",
+      "Don't add confirm buttons to the Confirm state.",
+      "Don't use green for decoration or for neutral information.",
+      "Don't treat the idle screenshots as proof that Live or Confirm render correctly on device."
     ]
   }
 }

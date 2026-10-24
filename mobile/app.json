@@ -1,20 +1,57 @@
 {
   "expo": {
-    "name": "Phone voice",
+    "name": "Tandem",
     "slug": "boson-phone-voice",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0D1012",
     "android": {
       "package": "dev.ronit.bosonphone",
       "predictiveBackGestureEnabled": true,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
       "permissions": [
         "android.permission.POST_NOTIFICATIONS"
       ]
     },
     "plugins": [
-      ["expo-build-properties", { "android": { "minSdkVersion": 31 } }]
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 31
+          }
+        }
+      ],
+      [
+        "expo-font",
+        {
+          "android": {
+            "fonts": [
+              {
+                "fontFamily": "Manrope",
+                "fontDefinitions": [
+                  { "path": "./node_modules/@expo-google-fonts/manrope/500Medium/Manrope_500Medium.ttf", "weight": 500 },
+                  { "path": "./node_modules/@expo-google-fonts/manrope/600SemiBold/Manrope_600SemiBold.ttf", "weight": 600 }
+                ]
+              },
+              {
+                "fontFamily": "InstrumentSans",
+                "fontDefinitions": [
+                  { "path": "./node_modules/@expo-google-fonts/instrument-sans/400Regular/InstrumentSans_400Regular.ttf", "weight": 400 },
+                  { "path": "./node_modules/@expo-google-fonts/instrument-sans/500Medium/InstrumentSans_500Medium.ttf", "weight": 500 },
+                  { "path": "./node_modules/@expo-google-fonts/instrument-sans/600SemiBold/InstrumentSans_600SemiBold.ttf", "weight": 600 }
+                ]
+              }
+            ]
+          }
+        }
+      ]
     ]
   }
 }

@@ -64,8 +64,8 @@ class VoiceService : Service() {
       getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("voice", "Voice session", NotificationManager.IMPORTANCE_LOW))
       val stop = PendingIntent.getService(this, 1, Intent(this, VoiceService::class.java).setAction("STOP"), PendingIntent.FLAG_IMMUTABLE)
       val open = PendingIntent.getActivity(this, 2, packageManager.getLaunchIntentForPackage(packageName), PendingIntent.FLAG_IMMUTABLE)
-      startForeground(1, Notification.Builder(this, "voice").setSmallIcon(android.R.drawable.ic_btn_speak_now)
-        .setContentTitle("Phone voice is listening").setContentText("Tap Stop to end microphone access")
+      startForeground(1, Notification.Builder(this, "voice").setSmallIcon(R.drawable.ic_tandem)
+        .setContentTitle("Tandem is listening").setContentText("Tap Stop to end microphone access")
         .setContentIntent(open).setOngoing(true).addAction(Notification.Action.Builder(null, "Stop", stop).build()).build())
       running = true
       getSystemService(NotificationManager::class.java).cancel(ISSUE_NOTIFICATION)

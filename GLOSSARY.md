@@ -1,4 +1,4 @@
-# Phone voice
+# Tandem
 
 Language for the voice-operated phone prototype and its acceptance checks.
 

@@ -48,5 +48,5 @@ const heartbeat = setInterval(() => {
   for (const ws of sockets.clients) if (ws.readyState === WebSocket.OPEN) ws.ping();
 }, 20_000);
 server.on('close', () => clearInterval(heartbeat));
-server.listen(Number(process.env.PORT || 3000), '0.0.0.0', () => console.log('Phone voice server listening'));
+server.listen(Number(process.env.PORT || 3000), '0.0.0.0', () => console.log('Tandem server listening'));
 process.on('SIGTERM', () => { voice?.close(); for (const ws of sockets.clients) ws.close(); server.close(); });
