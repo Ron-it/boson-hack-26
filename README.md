@@ -18,7 +18,8 @@ Interrupt at any time to correct it, pause it, or take over.
 | --- | --- |
 | `higgs-realtime-1.5-preview` | The whole conversation: hears the user, speaks back, and decides when to act through tool calls (`update_phone_task`, `look_at_screen`, `confirm_phone_action`, `set_help_mode`, `pause_phone_task`, `stop_phone_task`, `quick_phone_action`). |
 | `higgs-stt-3.1` | Input transcription, used to check that confirmations ("yes, send it") came from the user's own words. |
-| Higgs voices | Three presets: **Quick** (fast turn-taking), **Family** (warm, slower, always Hindi, can use a cloned family member's voice), **Hands-free** (never asks the user to touch the screen). |
+| Higgs voice cloning | Family mode speaks in a cloned voice. For the demo we recorded Ronit speaking Hindi, created a custom voice through Boson's voice API, and set it as the Family preset's voice, so a parent or grandparent hears help in their own family member's voice. |
+| Higgs voices | Three presets: **Quick** (fast turn-taking), **Family** (warm, slower, always Hindi, in the cloned voice), **Hands-free** (never asks the user to touch the screen). |
 
 Speech onset cancels in-flight phone work, flushes playback, and the corrected
 goal replaces the old one. Sending, paying, deleting and other irreversible taps
@@ -59,6 +60,8 @@ npm start              # listens on PORT, default 3000
 Deploy it anywhere with a public HTTPS URL (the `Dockerfile` is what runs on
 Railway). `GET /health` reports whether the phone is connected. Optional:
 `FAMILY_VOICE=voice_<id>` sets a cloned Higgs voice for the Family preset.
+`bash scripts/family-voice.sh` walks through recording Hindi, cloning it with
+Boson, and saving the voice ID.
 
 **Phone**
 
