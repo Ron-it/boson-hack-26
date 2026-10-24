@@ -164,7 +164,7 @@ class VoiceService : Service() {
   }
 
   private fun executeCommand(event: JSONObject) {
-    val result = JSONObject()
+    var result = JSONObject()
     try {
       check(!getSystemService(KeyguardManager::class.java).isDeviceLocked) { "Unlock the phone first" }
       when (event.getString("name")) {
@@ -183,6 +183,9 @@ class VoiceService : Service() {
           val actual = Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS)
           check(actual == value) { "Brightness did not retain the requested value" }
           result.put("status", "completed").put("requestedPercent", percent).put("observedRawValue", actual).put("note", "Approximate Android slider percentage; adaptive brightness remains unchanged.")
+        }
+        "read_media_volume", "set_media_volume", "resolve_handler", "create_timer", "create_alarm" -> {
+          result = PhoneCommands(this).execute(event.getString("name"), event.getJSONObject("args"))
         }
         else -> error("Unknown phone command")
       }

@@ -52,7 +52,7 @@ test('brightness permission denial falls back to evidenced Settings in the same 
   const task = new PhoneTask(phone, status => statuses.push(status), {}, { decide: async () => ({ actionId: 'done', confidence: null, returnedModel: null }) }, async () => ({ status: 'blocked', reason: 'Synthetic permission denial' }));
   await task.submit({ instruction: 'Brightness 40%', brightness: 40 });
   assert.equal(statuses.at(-1)?.state, 'completed');
-  assert.match(statuses.at(-1)?.detail ?? '', /Brightness/);
+  assert.match(statuses.at(-1)?.detail ?? '', /"brightness":40/);
 });
 
 test('invalid native targets are rejected before a phone mutation', async () => {

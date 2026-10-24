@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { DeviceConnection } from './device.ts';
 import { createScreenDescriber, createSelector } from '../mobile/selectors.ts';
 import { readScreenForHelp, type ScreenDescriber } from './help.ts';
-import { PhoneTask, phoneRequestSchema, type TaskStatus } from './task.ts';
+import { PhoneTask, phoneRequestSchema, type PhoneRequest, type TaskStatus } from './task.ts';
 
 const eventSchema = z.object({
   type: z.string(), delta: z.string().optional(), transcript: z.string().optional(),
@@ -15,7 +15,12 @@ const eventSchema = z.object({
   })).optional() }).optional(),
   error: z.object({ code: z.string().optional() }).optional(),
 });
-const instructionSchema = phoneRequestSchema;
+// Use explicit states on the realtime wire. Keep boolean compatibility for
+// existing callers, then normalize once at the operator boundary.
+const instructionSchema = z.object({
+  ...phoneRequestSchema.shape,
+  nightLight: z.union([z.enum(['on', 'off']).transform(state => state === 'on'), z.boolean()]).optional(),
+}).pipe(phoneRequestSchema);
 
 const instructions = `You are a concise, friendly voice assistant operating this Android phone.
 You can operate apps on the phone through update_phone_task: Settings for brightness and Night Light, and messaging apps for composing and sending a message.
@@ -29,11 +34,12 @@ When a task update asks for confirmation, read back the recipient and message an
 If direct brightness control is blocked by permission, use update_phone_task to adjust it through the Settings UI instead.
 When the user corrects an in-progress task, call update_phone_task with the COMPLETE corrected goal, retaining requirements they did not cancel. Speaking pauses phone actions automatically. Acknowledge briefly, then resume only the latest intent through a tool call. Use stop_phone_task for stop/cancel. Use pause_phone_task for explicit pause or manual takeover; it persists even across corrections. Use continue_phone_task only when the user explicitly asks to continue.
 The phone UI worker is separate from you. Do not describe an action as completed until the tool or a task update supplies observed evidence. Task started is not task completed.
-Never announce made-up phone values or keep chatting over the user. No long preambles.`;
+Never announce made-up phone values or keep chatting over the user. Use at most one short sentence for an acknowledgment or outcome. Do not narrate taps, repeat the request, or offer extra help. Explain steps only in guide mode.`;
 
 const tools = [
   { type: 'function', name: 'update_phone_task', description: 'Start or replace the phone task with the complete latest user goal.', parameters: { type: 'object', properties: {
-    instruction: { type: 'string' }, brightness: { type: 'number', minimum: 10, maximum: 100 }, nightLight: { type: 'boolean' },
+    instruction: { type: 'string' }, brightness: { type: 'number', minimum: 10, maximum: 100 },
+    nightLight: { type: 'string', enum: ['on', 'off'], description: 'The desired Night Light state: on enables it; off disables it.' },
     app: { type: 'string', description: 'App to use, as the user named it.' }, recipient: { type: 'string', description: 'Who receives the message, as the user said it.' }, message: { type: 'string', description: 'The exact message text.' },
   }, required: ['instruction'], additionalProperties: false } },
   { type: 'function', name: 'confirm_phone_action', description: 'Relay the user\'s spoken answer to a pending confirmation, such as sending a message.', parameters: { type: 'object', properties: { proposalId: { type: 'string' }, approve: { type: 'boolean' } }, required: ['proposalId', 'approve'], additionalProperties: false } },
@@ -57,7 +63,8 @@ export const bosonRealtimeUrl = `wss://api.boson.ai/v1/realtime?model=${bosonSes
 export function completionResponse(status: TaskStatus) {
   const ask = status.proposal
     ? ` Ask the user to confirm: send ${JSON.stringify(status.proposal.message)} to ${status.proposal.recipient}. Use proposal id ${status.proposal.id} in confirm_phone_action after they answer.`
-    : status.state === 'question' ? ' Ask the user this question.' : ' Briefly report only the observed outcome.';
+    : status.state === 'question' ? ' Ask the user this question in one short sentence.'
+    : ' Report the observed outcome in one short sentence, at most 20 words. Do not narrate steps, repeat the goal, or call tools.';
   return { type: 'response.create', response: {
     // Boson replaces the instructions for this response, so retain the session constraints.
     instructions: `${instructions}\n\nPhone task update for ${JSON.stringify(status.goal)}: ${status.state}. ${status.detail}.${ask}`,
@@ -79,6 +86,9 @@ export class VoiceSession {
   private responseRevisions = new Map<string, number>();
   private calls = new Map<string, { name: string; arguments: string; responseId: string }>();
   private handledCalls = new Set<string>();
+  // Only user speech grants another task submission. Model continuations and
+  // outcome announcements do not own retries, even when they use fresh call IDs.
+  private submittedRevision = -1;
   private commands = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
   private pendingAnnouncement: TaskStatus | undefined;
   private announcementTimer: NodeJS.Timeout | undefined;
@@ -157,6 +167,7 @@ export class VoiceSession {
         this.lastSpeechAt = Date.now();
         this.speeches++;
         this.revision++;
+        this.sendBoson({ type: 'session.update', session: { tool_choice: 'auto' } });
         // A confirmation still has to be asked aloud before anyone can answer it.
         if (!this.pendingAnnouncement?.proposal) this.pendingAnnouncement = undefined;
         this.calls.clear();
@@ -188,6 +199,7 @@ export class VoiceSession {
         }
         return;
       case 'response.done': {
+        console.log('Voice response:', ['completed', 'cancelled', 'incomplete', 'failed'].includes(event.response?.status ?? '') ? event.response?.status : 'unknown');
         this.responseActive = false;
         for (const item of event.response?.output ?? []) {
           if (item.type === 'function_call' && item.call_id && item.name && item.arguments && !this.handledCalls.has(item.call_id)) {
@@ -209,7 +221,8 @@ export class VoiceSession {
   }
 
   private async finishCalls(calls: [string, { name: string; arguments: string }][], revision: number, completed: boolean) {
-    for (const [callId, call] of calls) {
+    let continuationNeeded = false;
+    for (const [index, [callId, call]] of calls.entries()) {
       if (this.handledCalls.has(callId)) continue;
       this.handledCalls.add(callId);
       console.log('Voice tool:', call.name);
@@ -217,6 +230,14 @@ export class VoiceSession {
       try {
         if (!completed || revision !== this.revision || this.speaking || this.closed) throw new Error('Interrupted before the tool could run');
         const raw: unknown = JSON.parse(call.arguments);
+        if (['update_phone_task', 'set_brightness', 'continue_phone_task'].includes(call.name)
+          && this.submittedRevision === revision) {
+          console.log('Voice tool retained: same_user_turn');
+          this.sendBoson({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId,
+            output: JSON.stringify({ status: 'retained', note: 'The operator owns this request. Wait for the outcome or new user instructions; do not resubmit.' }) } });
+          continue;
+        }
+        continuationNeeded = true;
         if (this.mode === 'guide' && !readOnlyTools.has(call.name)) {
           throw new Error('Guide mode: the user is doing this themselves. Give the next step instead. Switch to do only if the user asks you to do it.');
         }
@@ -227,14 +248,26 @@ export class VoiceSession {
           this.sendApp({ type: 'help', mode: this.mode });
           output = { status: 'set', mode: this.mode };
         } else if (call.name === 'stop_phone_task') { this.task.stop(); output = { status: 'stopped' }; }
-        else if (call.name === 'update_phone_task') {
-          const request = instructionSchema.parse(raw);
-          void this.task.submit(request);
-          output = { status: 'accepted', note: 'Queued in the phone operator. Wait for observed results before claiming completion.' };
-        } else if (call.name === 'set_brightness') {
-          const { percent } = z.object({ percent: z.number().min(10).max(100) }).parse(raw);
-          void this.task.setBrightness(percent);
-          output = { status: 'accepted', note: 'Queued in the phone operator. Wait for observed results before claiming completion.' };
+        else if (call.name === 'update_phone_task' || call.name === 'set_brightness') {
+          this.submittedRevision = revision;
+          // A single user turn may produce sibling tools for each target. Submit
+          // their complete request once, before either path starts executing.
+          let request: PhoneRequest | undefined;
+          for (const [, sibling] of calls.slice(index)) {
+            if (sibling.name !== 'update_phone_task' && sibling.name !== 'set_brightness') break;
+            const args: unknown = JSON.parse(sibling.arguments);
+            const next = sibling.name === 'update_phone_task' ? instructionSchema.parse(args)
+              : { brightness: z.object({ percent: z.number().min(10).max(100) }).parse(args).percent,
+                instruction: 'Set the requested brightness' };
+            request = { ...request, ...next,
+              instruction: [request?.instruction, next.instruction].filter(Boolean).join('; ').slice(0, 2000) };
+          }
+          if (!request) throw new Error('Missing phone request');
+          // A brightness-only correction retains a previously requested Night Light target.
+          if (call.name === 'set_brightness' && calls.slice(index + 1).every(([, sibling]) => sibling.name !== 'update_phone_task')) {
+            if (request.brightness !== undefined) void this.task.setBrightness(request.brightness);
+          } else void this.task.submit(request);
+          output = { status: 'accepted', note: 'Working on the complete request. Wait for the operator outcome; do not resubmit.' };
         } else if (call.name === 'confirm_phone_action') {
           const { proposalId, approve } = z.object({ proposalId: z.string(), approve: z.boolean() }).parse(raw);
           // The voice model relays an answer; it cannot supply one. Require the user to have spoken after being asked.
@@ -246,14 +279,16 @@ export class VoiceSession {
         } else if (call.name === 'pause_phone_task') {
           this.task.pause(); output = { status: 'paused', note: 'Say continue when ready.' };
         } else if (call.name === 'continue_phone_task') {
+          this.submittedRevision = revision;
           void this.task.resume(); output = { status: 'accepted', note: 'Reassessing the current phone state.' };
         } else throw new Error('Unsupported tool');
       } catch (error) { output = { status: 'blocked', reason: error instanceof Error ? error.message : 'Tool failed' }; }
       this.sendBoson({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(output) } });
     }
-    if (!this.closed && revision === this.revision && !this.speaking && !this.responseActive) {
+    if (continuationNeeded && !this.closed && revision === this.revision && !this.speaking && !this.responseActive) {
       this.responseActive = true;
-      this.sendBoson({ type: 'response.create' });
+      if (this.submittedRevision === revision) this.sendBoson({ type: 'session.update', session: { tool_choice: 'none' } });
+      this.sendBoson({ type: 'response.create', response: { instructions: `${instructions}\n\nGive at most one short sentence. If the operator accepted the request, say only that you are working on it, then wait. Do not call another phone task tool.` } });
     }
   }
 
@@ -296,6 +331,7 @@ export class VoiceSession {
     this.pendingAnnouncement = undefined;
     this.asked = status.proposal && { proposalId: status.proposal.id, speeches: this.speeches };
     this.responseActive = true;
+    this.sendBoson({ type: 'session.update', session: { tool_choice: 'none' } });
     this.sendBoson(completionResponse(status));
   }
 }
