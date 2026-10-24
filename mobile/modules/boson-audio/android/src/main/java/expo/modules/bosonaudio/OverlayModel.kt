@@ -7,7 +7,7 @@ fun JSONObject.text(key: String): String = if (isNull(key)) "" else optString(ke
 fun JSONObject.int(key: String): Int? = if (isNull(key)) null else (opt(key) as? Number)?.toInt()
 
 /** What the rim shows. Each tone pairs with a label, so state never depends on color alone. */
-enum class Tone { READY, USER, AGENT, BUSY, ATTENTION, PAUSED, DONE, FAILED, UNCERTAIN }
+enum class Tone { READY, USER, AGENT, BUSY, ACTING, ATTENTION, PAUSED, DONE, FAILED, UNCERTAIN }
 enum class Level { NONE, MIC, PLAYBACK }
 
 data class OverlayFrame(
@@ -137,7 +137,7 @@ class OverlayModel {
     }
     val issue = issue
     task?.let { pendingTask ->
-      val tone = when (pendingTask.state) { "working" -> Tone.BUSY; "paused" -> Tone.PAUSED; else -> Tone.ATTENTION }
+      val tone = when (pendingTask.state) { "working" -> Tone.ACTING; "paused" -> Tone.PAUSED; else -> Tone.ATTENTION }
       return OverlayFrame(tone, Level.NONE, pending!!, pausedDetail(pendingTask), issue?.let { "${it.label}. ${it.detail}" }.orEmpty())
     }
     if (issue != null) return OverlayFrame(issue.tone, Level.NONE, issue.label, issue.detail)
