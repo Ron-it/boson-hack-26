@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.*
+!.env.example
+artifacts/
+*.apk
+mobile/android/
+mobile/ios/
+mobile/.expo/
+mobile/modules/*/android/build/
+mobile/modules/*/android/.gradle/
+.impeccable/review/

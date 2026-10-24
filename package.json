@@ -1,0 +1,22 @@
+{
+  "name": "boson-hack-26",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "phone": "node --env-file-if-exists=.env scripts/phone.ts",
+    "agent": "node --env-file-if-exists=.env scripts/agent.ts",
+    "test": "node --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "0.7.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2"
+  }
+}
