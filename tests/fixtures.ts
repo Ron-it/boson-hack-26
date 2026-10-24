@@ -13,7 +13,7 @@ export type Portal = (method: string, params: Record<string, unknown>) => unknow
 
 const outputSchema = z.object({ type: z.literal('conversation.item.create'), item: z.object({ call_id: z.string(), output: z.string() }) });
 
-export async function harness(portal: Portal, options: { describeScreen?: ScreenDescriber | null; selector?: Pick<ReturnType<typeof createSelector>, 'decide'>; holdResponses?: boolean } = {}) {
+export async function harness(portal: Portal, options: { describeScreen?: ScreenDescriber | null; selector?: Pick<ReturnType<typeof createSelector>, 'decide'>; holdResponses?: boolean; native?: (name: string, args: Record<string, unknown>) => unknown | Promise<unknown> } = {}) {
   const server = new WebSocketServer({ port: 0 });
   await once(server, 'listening');
   const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -35,12 +35,18 @@ export async function harness(portal: Portal, options: { describeScreen?: Screen
   const appSide = nextAccepted();
   const appClient = new WebSocket(url);
   const appEvents: { type: string; [key: string]: unknown }[] = [];
-  appClient.on('message', data => appEvents.push(z.looseObject({ type: z.string() }).parse(JSON.parse(data.toString()))));
+  appClient.on('message', data => {
+    const event = z.looseObject({ type: z.string() }).parse(JSON.parse(data.toString()));
+    appEvents.push(event);
+    const command = z.object({ type: z.literal('command'), id: z.string(), name: z.string(), args: z.record(z.string(), z.unknown()) }).safeParse(event);
+    if (command.success && options.native) void Promise.resolve(options.native(command.data.name, command.data.args))
+      .then(result => appClient.send(JSON.stringify({ type: 'command_result', id: command.data.id, result })));
+  });
   const appSocket = await appSide;
 
   const bosonSide = nextAccepted();
   const boson = new WebSocket(url);
-  const { holdResponses = false, ...adapters } = options;
+  const { holdResponses = false, native: _native, ...adapters } = options;
   const session = new VoiceSession(appSocket, device, { BOSON_API_KEY: 'synthetic' }, {
     voiceSocket: await bosonSide,
     selector: { decide: async () => ({ actionId: 'blocked', confidence: null, returnedModel: null }) },
