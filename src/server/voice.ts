@@ -176,6 +176,8 @@ export class VoiceSession {
   private firstInput = true;
   private firstOutput = true;
   private describeScreen: ScreenDescriber | null;
+  /** Opt-in content logging (transcripts, operator details) for diagnosing live sessions. Off by default. */
+  private debug: boolean;
   /** Guide mode is the user's choice to act themselves; only an explicit request switches back. */
   private mode: 'do' | 'guide' = 'do';
   private speeches = 0;
@@ -188,6 +190,7 @@ export class VoiceSession {
     this.responseDeadlineMs = adapters.responseDeadlineMs ?? 30_000;
     this.device = device;
     this.describeScreen = adapters.describeScreen === undefined ? createScreenDescriber(environment) : adapters.describeScreen;
+    this.debug = environment.DEBUG_LOGS === '1';
     const key = environment.BOSON_API_KEY;
     if (!key) throw new Error('Boson key is not configured on the server');
     this.task = new PhoneTask(device.phone, status => this.onTaskStatus(status), environment, adapters.selector, (name, args) => this.command(name, args));
@@ -301,9 +304,11 @@ export class VoiceSession {
       case 'response.output_audio_transcript.delta':
       case 'response.output_audio_transcript.done':
         if (!this.canRelay(event.response_id)) return;
+        if (this.debug && event.type === 'response.output_audio_transcript.done') console.log('Debug assistant said:', JSON.stringify(event.transcript ?? ''));
         this.sendApp(event);
         return;
       case 'conversation.item.input_audio_transcription.completed':
+        if (this.debug) console.log('Debug user said:', JSON.stringify(event.transcript ?? ''));
         this.sendApp(event);
         return;
       case 'response.function_call_arguments.done':
@@ -358,6 +363,7 @@ export class VoiceSession {
       this.handledCalls.add(callId);
       const tool = tools.some(tool => tool.name === call.name) ? call.name : 'unsupported';
       console.log('Voice tool:', tool);
+      if (this.debug) console.log('Debug tool arguments:', tool, call.arguments.slice(0, 1000));
       this.phase('tool_dispatch', this.turnStarted);
       let output: object;
       let rejection: ToolResultCategory = 'tool_error';
@@ -412,6 +418,7 @@ export class VoiceSession {
         } else if (call.name === 'confirm_phone_action') {
           rejection = 'confirmation_required';
           const { proposalId, approve } = z.object({ proposalId: z.string(), approve: z.boolean() }).parse(raw);
+          console.log('Voice confirmation answer:', approve ? 'approve' : 'decline');
           // The voice model relays an answer; it cannot supply one. Require the user to have spoken after being asked.
           if (this.asked?.proposalId !== proposalId || this.speeches <= this.asked.speeches) throw new Error('Ask the user and wait for their answer before confirming.');
           const answer = this.task.answer(proposalId, approve);
@@ -530,6 +537,7 @@ export class VoiceSession {
 
   private onTaskStatus(status: TaskStatus) {
     console.log('Phone task:', status.state, 'revision:', status.revision);
+    if (this.debug) console.log('Debug task detail:', JSON.stringify({ goal: status.goal, detail: status.detail, proposal: status.proposal }));
     const changed = this.taskStatus?.state !== status.state || this.taskStatus.revision !== status.revision;
     this.taskStatus = status;
     if (changed) this.diagnostic('operator_state');
