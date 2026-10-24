@@ -1,3 +1,4 @@
+import { measure } from './timing.ts';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import { z } from 'zod';
@@ -7,6 +8,7 @@ const replySchema = z.object({ id: z.string(), status: z.string(), result: z.unk
 
 /** One connection owns its pending requests. A disconnected mutation is never replayed. */
 export class DeviceConnection {
+  private timingOwner = randomUUID();
   private pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
   /** Geometry is refreshed for every observation, including dialogs that fit an obsolete orientation. */
   private display: DisplaySize | null | undefined;
@@ -67,7 +69,7 @@ export class DeviceConnection {
   }
 
   private async capture() {
-    const bytes = decodeScreenshot(await this.request('screenshot', { hideOverlay: true }));
+    const bytes = decodeScreenshot(await measure({ owner: this.timingOwner, revision: 0 }, 'portal_screenshot', () => this.request('screenshot', { hideOverlay: true })));
     this.display = pngSize(bytes);
     return bytes;
   }

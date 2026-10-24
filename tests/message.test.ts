@@ -280,7 +280,8 @@ test('a confirmation queued when the user starts speaking is still asked aloud b
   const app = messagesApp();
   const phone = await harness(app.portal, { selector: navigator, holdResponses: true });
   try {
-    // Boson is still speaking its reply to the request, so the confirmation waits behind it.
+    // Recent user speech keeps the proposal queued until it can be asked aloud.
+    phone.speak();
     await phone.call('update_phone_task', voiceRequest);
     const proposal = await proposalOf(phone);
     phone.speak();

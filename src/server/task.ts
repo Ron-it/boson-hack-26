@@ -1,3 +1,4 @@
+import { measure, timing } from './timing.ts';
 import { planOperation, type PlannedOperation, type OperationProgress, type OperationEvidence, type OperationScope } from './operation-plan.ts';
 import { clockRequest, timerRequestSchema, alarmRequestSchema, type ClockProposal, type ClockCommand } from './native-requests.ts';
 import { executeNativeCommand, type NativeTransport } from './native-commands.ts';
@@ -75,6 +76,7 @@ const phoneExecutions = new WeakMap<PhoneControl, PhoneExecution>();
 
 /** The revision is invalidated synchronously, before awaiting a cancelled model request. */
 export class PhoneTask {
+  private timingOwner = randomUUID();
   private revision = 0;
   private abort: AbortController | undefined;
   private goal = '';
@@ -95,10 +97,14 @@ export class PhoneTask {
     environment = process.env,
     selector: Pick<ReturnType<typeof createSelector>, 'decide'> = createSelector('openai', environment),
     native?: NativeCommand) {
-    this.phone = phone;
+    const screenshot = phone.screenshot;
+    this.phone = { ...phone,
+      state: () => measure(this.timingContext(), 'state', () => phone.state()),
+      ...(screenshot && { screenshot: () => measure(this.timingContext(), 'screenshot', () => screenshot()) }),
+    };
     this.execution = phoneExecutions.get(phone) ?? { tail: Promise.resolve(), brightnessUnknown: false, sendUnknown: undefined, clockUnknown: undefined, mediaUnknown: undefined };
     phoneExecutions.set(phone, this.execution);
-    this.native = native;
+    this.native = native && ((name, args) => measure(this.timingContext(), `native_${name}`, () => native(name, args)));
     this.emit = emit;
     this.selector = selector;
   }
@@ -180,7 +186,9 @@ export class PhoneTask {
   }
 
   setBrightness(percent: number) {
-    return this.submit({ ...this.request, instruction: this.request?.nightLight === undefined ? `Set brightness to ${percent}%` : `Set brightness to ${percent}%, retaining Night Light ${this.request.nightLight ? 'on' : 'off'}`, brightness: percent });
+    const retained = this.plan.some(step => step.state !== 'completed') ? this.request
+      : this.request?.nightLight !== undefined ? { nightLight: this.request.nightLight } : undefined;
+    return this.submit({ ...retained, instruction: this.request?.nightLight === undefined ? `Set brightness to ${percent}%` : `Set brightness to ${percent}%, retaining Night Light ${this.request.nightLight ? 'on' : 'off'}`, brightness: percent });
   }
 
   /** Explicit read-only commands may overlap voice and selector inference; they never enter the mutation queue. */
@@ -204,22 +212,27 @@ export class PhoneTask {
     this.abort = abort;
     this.emit({ type: 'task', state: 'working', goal, detail, revision });
     // An already-dispatched gesture may still be finishing. Never run two action loops together.
+    const queued = performance.now();
     const tail = this.execution.tail.catch(() => {}).then(async () => {
       if (revision !== this.revision) return;
+      timing({ owner: this.timingOwner, revision }, 'queue', queued);
+      const started = performance.now();
       try { await work(revision, abort.signal); }
       catch (error) {
         if (!abort.signal.aborted && revision === this.revision) {
           this.finish('blocked', error instanceof Error ? error.message : 'Phone task failed', revision);
         }
-      }
+      } finally { timing({ owner: this.timingOwner, revision }, 'execution', started); }
     });
     this.execution.tail = tail;
     return tail;
   }
 
+  private timingContext() { return { owner: this.timingOwner, revision: this.revision, ...(this.currentStep && { operation: this.currentStep.id }) }; }
+
   private progress(): OperationProgress[] {
     return this.plan.map(({ id, label, effect, state, detail, evidence }) => ({ id, label, effect, state,
-      ...(detail !== undefined && { detail }), ...(evidence && { evidence }) }));
+      ...(detail !== undefined && { detail }), ...(evidence && { evidence: structuredClone(evidence) }) }));
   }
 
   private planRequest(request: PhoneRequest) {
@@ -271,7 +284,8 @@ export class PhoneTask {
       this.currentStep = step;
       if (step.state === 'completed') {
         if (!step.check) continue;
-        const verified = await step.check(scope, step.evidence);
+        const verify = step.check;
+        const verified = await measure(this.timingContext(), 'verification', () => verify(scope, step.evidence));
         if (verified) { check(); step.evidence = verified; continue; }
         check();
         step.state = 'pending';
@@ -284,10 +298,16 @@ export class PhoneTask {
     }
     check();
     // A later UI step must not hide a changed native outcome. Single-operation behavior keeps its existing readback.
+    this.currentStep = undefined;
     if (this.plan.length > 1) for (const step of this.plan.filter(operation => operation.state === 'completed' && operation.check)) {
-      const valid = await step.check?.(scope, step.evidence);
+      const valid = await measure({ owner: this.timingOwner, revision, operation: step.id }, 'verification', async () => step.check?.(scope, step.evidence)).catch(() => false as const);
       check();
-      if (!valid) { step.state = 'pending'; step.detail = `The ${step.label} result no longer matches the request.`; }
+      if (!valid) {
+        step.state = step.id === 'media' ? 'unknown' : 'pending';
+        step.detail = `I can't establish the ${step.label} result. Say continue to inspect it.`;
+        delete step.evidence;
+        if (step.id === 'media') this.execution.mediaUnknown = this.request?.mediaVolume;
+      }
       else step.evidence = valid;
     }
     this.currentStep = undefined;
@@ -471,9 +491,13 @@ export class PhoneTask {
     let unchanged = 0;
     for (let step = 0; step < 16; step++) {
       check();
-      const observation = await readStableScreen(this.phone, signal, minimumMs);
+      const observation = await measure(this.timingContext(), 'settle', () => readStableScreen(this.phone, signal, minimumMs));
       if (settings) assertSettingsScreen(observation);
       check();
+      if (!settings && !request.message) {
+        const evidence = capabilityFor(observation)?.outcome?.(observation, request, selection);
+        if (evidence) { this.finish('completed', evidence.detail, revision, undefined, evidence); return; }
+      }
       if (previous?.fingerprint === progressFingerprint(observation)) {
         unchanged++;
         history.push(`No visible change after ${previous.id}; try another sensible action.`);
@@ -493,7 +517,7 @@ export class PhoneTask {
         } catch { history.push('Screenshot unavailable; do not guess unseen controls.'); }
         check();
       }
-      const decision = await this.selector.decide({ goal, request, observation, candidates, history, ...(screenshot && { screenshot }), signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]) });
+      const decision = await measure(this.timingContext(), 'model', () => this.selector.decide({ goal, request, observation, candidates, history, ...(screenshot && { screenshot }), signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]) }));
       check();
       const candidate = candidates.find(item => item.id === decision.actionId);
       if (!candidate) throw new Error('Invalid phone action; stopped');
@@ -546,7 +570,7 @@ export class PhoneTask {
       }
       this.emit({ type: 'task', state: 'working', goal, detail: candidate.description, revision });
       check();
-      try { await executeAction(this.phone, candidate, async () => {
+      try { await measure(this.timingContext(), 'dispatch', () => executeAction(this.phone, candidate, async () => {
         check();
         const focused = await this.phone.state();
         check();
@@ -554,7 +578,7 @@ export class PhoneTask {
         const field = focused.elements.find(element => candidate.element?.resourceId === element.resourceId
           && candidate.element?.bounds.left === element.bounds.left && candidate.element?.bounds.top === element.bounds.top);
         if (field?.focused === false) throw new Error('The input field does not have keyboard focus.');
-      }); }
+      })); }
       catch { check(); this.finish('unknown', 'Phone action outcome is unknown. Say continue to inspect before acting again.', revision); return; }
       check();
       if (candidate.action.type !== 'wait') selection = candidate.effect?.kind === 'open_content'
@@ -689,7 +713,7 @@ export class PhoneTask {
     this.active = false;
     const pending = this.plan.filter(operation => operation.state !== 'completed');
     const partial = this.plan.length > 1 ? ` ${this.plan.length - pending.length}/${this.plan.length} outcomes established; unfinished: ${pending.map(operation => operation.label).join(', ')}.` : '';
-    this.emit({ type: 'task', state, goal: this.goal, detail: detail + partial, revision, ...(proposal && { proposal }), ...(evidence && { evidence }),
+    this.emit({ type: 'task', state, goal: this.goal, detail: detail + partial, revision, ...(proposal && { proposal }), ...(evidence && { evidence: structuredClone(evidence) }),
       ...(this.plan.length > 1 && { progress: this.progress() }) });
   }
 

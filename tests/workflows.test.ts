@@ -335,3 +335,53 @@ test('continue rechecks completed UI evidence while retaining an earlier unknown
   assert.equal(creates, 1);
   assert.equal(statuses.at(-1)?.state, 'unknown');
 });
+
+test('a fresh supported UI outcome completes without another model decision', async () => {
+  let query = '';
+  let decisions = 0;
+  const statuses: TaskStatus[] = [];
+  const phone = control(async () => screen([search(query), ...(query ? [result()] : [])]), { typeText: async text => { query = text; } });
+  await new PhoneTask(phone, status => statuses.push(status), {}, { decide: async ({ candidates }) => {
+    decisions++;
+    return { actionId: query ? 'done' : candidates.find(candidate => candidate.action.type === 'type')?.id ?? 'blocked', confidence: null, returnedModel: null };
+  } }).submit(request);
+  assert.equal(statuses.at(-1)?.state, 'completed');
+  assert.equal(decisions, 1, 'fresh capability evidence makes a second model call unnecessary');
+});
+
+test('lost final native readback leaves that outcome unknown while preserving the independently established UI result', async () => {
+  let query = '';
+  let writes = 0;
+  const statuses: TaskStatus[] = [];
+  const phone = control(async () => screen([search(query), ...(query ? [result()] : [])]), { typeText: async text => { query = text; } });
+  const task = new PhoneTask(phone, status => statuses.push(status), {}, { decide: async ({ candidates }) => ({ actionId: candidates.find(candidate => candidate.action.type === 'type')?.id ?? 'blocked', confidence: null, returnedModel: null }) }, async name => {
+    if (name === 'read_media_volume') throw new Error('Synthetic read unavailable');
+    writes++;
+    return { status: 'completed', stream: 'media', requestedPercent: 30, requestedIndex: 3, observedIndex: 3, minIndex: 0, maxIndex: 10 };
+  });
+  await task.submit({ ...request, mediaVolume: 30 });
+  assert.equal(statuses.at(-1)?.state, 'unknown');
+  assert.equal(statuses.at(-1)?.progress?.find(step => step.id === 'media')?.state, 'unknown');
+  assert.equal(statuses.at(-1)?.progress?.find(step => step.id === 'app')?.state, 'completed');
+  await task.resume();
+  assert.equal(writes, 1, 'unavailable readback never authorizes another write');
+  assert.notEqual(statuses.at(-1)?.state, 'completed');
+});
+
+test('a new brightness request after the whole goal completed does not replay the previous app and media operations', async () => {
+  let query = '';
+  let mediaWrites = 0;
+  const statuses: TaskStatus[] = [];
+  const phone = control(async () => screen([search(query), ...(query ? [result()] : [])]), { typeText: async text => { query = text; } });
+  const task = new PhoneTask(phone, status => statuses.push(status), {}, { decide: async ({ candidates }) => ({ actionId: candidates.find(candidate => candidate.action.type === 'type')?.id ?? 'blocked', confidence: null, returnedModel: null }) }, async name => {
+    if (name === 'set_brightness') return { status: 'completed', requestedPercent: 100, observedRawValue: 255 };
+    if (name === 'set_media_volume') { mediaWrites++; return { status: 'completed', stream: 'media', requestedPercent: 30, requestedIndex: 3, observedIndex: 3, minIndex: 0, maxIndex: 10 }; }
+    return { status: 'observed', stream: 'media', observedIndex: 3, minIndex: 0, maxIndex: 10 };
+  });
+  await task.submit({ ...request, mediaVolume: 30 });
+  assert.equal(statuses.at(-1)?.state, 'completed');
+  await task.setBrightness(100);
+  assert.equal(statuses.at(-1)?.state, 'completed');
+  assert.equal(mediaWrites, 1);
+  assert.equal(statuses.at(-1)?.progress, undefined);
+});
