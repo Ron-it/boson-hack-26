@@ -6,6 +6,12 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
   <uses-permission android:name="android.permission.WAKE_LOCK" />
   <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+  <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+  <queries>
+    <intent><action android:name="android.intent.action.SET_TIMER" /></intent>
+    <intent><action android:name="android.intent.action.SET_ALARM" /></intent>
+    <intent><action android:name="android.settings.DISPLAY_SETTINGS" /></intent>
+  </queries>
   <application>
     <service android:name=".VoiceService" android:exported="false" android:foregroundServiceType="microphone" />
   </application>
