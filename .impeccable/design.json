@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-24T01:53:17.414737Z",
+  "title": "Design System: Phone voice",
+  "extensions": {
+    "colorMeta": {
+      "light-surface": {
+        "role": "neutral",
+        "displayName": "Light App surface"
+      },
+      "light-text": {
+        "role": "neutral",
+        "displayName": "Light Primary text"
+      },
+      "light-secondary": {
+        "role": "neutral",
+        "displayName": "Light Supporting text"
+      },
+      "light-primary": {
+        "role": "primary",
+        "displayName": "Light Action green"
+      },
+      "light-on-primary": {
+        "role": "primary",
+        "displayName": "Light Text on action"
+      },
+      "light-input": {
+        "role": "neutral",
+        "displayName": "Light Input fill"
+      },
+      "light-error": {
+        "role": "neutral",
+        "displayName": "Light Error text"
+      },
+      "dark-surface": {
+        "role": "neutral",
+        "displayName": "Dark App surface"
+      },
+      "dark-text": {
+        "role": "neutral",
+        "displayName": "Dark Primary text"
+      },
+      "dark-secondary": {
+        "role": "neutral",
+        "displayName": "Dark Supporting text"
+      },
+      "dark-primary": {
+        "role": "primary",
+        "displayName": "Dark Action green"
+      },
+      "dark-on-primary": {
+        "role": "primary",
+        "displayName": "Dark Text on action"
+      },
+      "dark-input": {
+        "role": "neutral",
+        "displayName": "Dark Input fill"
+      },
+      "dark-error": {
+        "role": "neutral",
+        "displayName": "Dark Error text"
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Current session state."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "App title."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Instructions, request, progress, transcript, and errors."
+      },
+      "supporting": {
+        "displayName": "Supporting",
+        "purpose": "Short introductory sentence."
+      },
+      "button": {
+        "displayName": "Button",
+        "purpose": "Primary and text action labels."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Field and content identifiers."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Audio and agent disclosure."
+      },
+      "input": {
+        "displayName": "Input",
+        "purpose": "Connection field values; native line metrics."
+      }
+    }
+  },
+  "components": [
+    {
+      "name": "Light Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary-light",
+      "description": "Start/Stop action. Native minimum height and content growth are preserved; opacity changes on press or when unconfigured. Browser focus outline is a preview adapter.",
+      "html": "<div class=\"ds-light-surface\"><button class=\"ds-light-primary\">Start listening</button></div>",
+      "css": ".ds-light-surface { background: #F4F8F5; color: #142D28; padding: 24px; font-family: system-ui, sans-serif; } .ds-light-primary { width: 100%; box-sizing: border-box; min-height: 56px; margin-top: 12px; padding: 16px 24px; display: flex; justify-content: center; align-items: center; border: 0; border-radius: 8px; background: #006B55; color: #FFFFFF; font: 600 16px/24px system-ui, sans-serif; } .ds-light-primary:hover { background: #006B55; } .ds-light-primary:focus-visible { outline: auto; } .ds-light-primary:active { opacity: 0.75; } .ds-light-primary:disabled { opacity: 0.45; }"
+    },
+    {
+      "name": "Light Text Button",
+      "kind": "button",
+      "refersTo": "button-text-light",
+      "description": "Plain permission or connection action. No custom native pressed or hover treatment; browser focus outline is a preview adapter.",
+      "html": "<div class=\"ds-light-surface\"><button class=\"ds-light-text\">Connection settings</button></div>",
+      "css": ".ds-light-surface { background: #F4F8F5; color: #142D28; padding: 24px; font-family: system-ui, sans-serif; } .ds-light-text { width: 100%; min-height: 48px; padding: 12px 0; display: flex; align-items: center; text-align: left; border: 0; background: transparent; color: #006B55; font: 600 16px/24px system-ui, sans-serif; } .ds-light-text:hover { background: transparent; } .ds-light-text:focus-visible { outline: auto; }"
+    },
+    {
+      "name": "Light Input Field",
+      "kind": "input",
+      "refersTo": "input-light",
+      "description": "Labeled connection field. Native vertical metrics are platform-owned; the preview retains browser defaults. Pairing uses the same styling with masked entry.",
+      "html": "<div class=\"ds-light-surface\"><label class=\"ds-light-input-label\" for=\"ds-light-input-address\">Server address</label><input class=\"ds-light-input\" id=\"ds-light-input-address\" type=\"url\" placeholder=\"https://your-server\" autocapitalize=\"none\" spellcheck=\"false\"></div>",
+      "css": ".ds-light-surface { background: #F4F8F5; color: #142D28; padding: 24px; font-family: system-ui, sans-serif; } .ds-light-input-label { display: block; margin-bottom: 8px; color: #142D28; font: 600 14px/20px system-ui, sans-serif; } .ds-light-input { width: 100%; box-sizing: border-box; min-height: 56px; padding-inline: 16px; border: 0; border-radius: 4px; background: #E4EEE7; color: #142D28; font-family: system-ui, sans-serif; font-size: 16px; } .ds-light-input::placeholder { color: #47645B; opacity: 1; } .ds-light-input:hover { background: #E4EEE7; } .ds-light-input:focus-visible { outline: auto; }"
+    },
+    {
+      "name": "Dark Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary-dark",
+      "description": "Start/Stop action. Native minimum height and content growth are preserved; opacity changes on press or when unconfigured. Browser focus outline is a preview adapter.",
+      "html": "<div class=\"ds-dark-surface\"><button class=\"ds-dark-primary\">Start listening</button></div>",
+      "css": ".ds-dark-surface { background: #10251F; color: #E2F2E7; padding: 24px; font-family: system-ui, sans-serif; } .ds-dark-primary { width: 100%; box-sizing: border-box; min-height: 56px; margin-top: 12px; padding: 16px 24px; display: flex; justify-content: center; align-items: center; border: 0; border-radius: 8px; background: #7BDBB5; color: #00382A; font: 600 16px/24px system-ui, sans-serif; } .ds-dark-primary:hover { background: #7BDBB5; } .ds-dark-primary:focus-visible { outline: auto; } .ds-dark-primary:active { opacity: 0.75; } .ds-dark-primary:disabled { opacity: 0.45; }"
+    },
+    {
+      "name": "Dark Text Button",
+      "kind": "button",
+      "refersTo": "button-text-dark",
+      "description": "Plain permission or connection action. No custom native pressed or hover treatment; browser focus outline is a preview adapter.",
+      "html": "<div class=\"ds-dark-surface\"><button class=\"ds-dark-text\">Connection settings</button></div>",
+      "css": ".ds-dark-surface { background: #10251F; color: #E2F2E7; padding: 24px; font-family: system-ui, sans-serif; } .ds-dark-text { width: 100%; min-height: 48px; padding: 12px 0; display: flex; align-items: center; text-align: left; border: 0; background: transparent; color: #7BDBB5; font: 600 16px/24px system-ui, sans-serif; } .ds-dark-text:hover { background: transparent; } .ds-dark-text:focus-visible { outline: auto; }"
+    },
+    {
+      "name": "Dark Input Field",
+      "kind": "input",
+      "refersTo": "input-dark",
+      "description": "Labeled connection field. Native vertical metrics are platform-owned; the preview retains browser defaults. Pairing uses the same styling with masked entry.",
+      "html": "<div class=\"ds-dark-surface\"><label class=\"ds-dark-input-label\" for=\"ds-dark-input-address\">Server address</label><input class=\"ds-dark-input\" id=\"ds-dark-input-address\" type=\"url\" placeholder=\"https://your-server\" autocapitalize=\"none\" spellcheck=\"false\"></div>",
+      "css": ".ds-dark-surface { background: #10251F; color: #E2F2E7; padding: 24px; font-family: system-ui, sans-serif; } .ds-dark-input-label { display: block; margin-bottom: 8px; color: #E2F2E7; font: 600 14px/20px system-ui, sans-serif; } .ds-dark-input { width: 100%; box-sizing: border-box; min-height: 56px; padding-inline: 16px; border: 0; border-radius: 4px; background: #203C31; color: #E2F2E7; font-family: system-ui, sans-serif; font-size: 16px; } .ds-dark-input::placeholder { color: #ADCABB; opacity: 1; } .ds-dark-input:hover { background: #203C31; } .ds-dark-input:focus-visible { outline: auto; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Restrained Android utility",
+    "overview": "This is the implemented utility direction from PRODUCT.md, not a final product identity. A flat green surface, plain system text, and a single filled action keep the interface direct. Status and controls carry the visual hierarchy; decoration does not.\n\nThe source of truth is `mobile/App.tsx`. The light, dark, and enlarged-text Pixel captures in `.impeccable/review/` support the visual review disposition of SHIP. They establish the rendered idle interface, not acceptance of live voice, correction timing, or speaker echo cancellation.",
+    "keyCharacteristics": [
+      "One scrolling column with native safe areas and scalable text.",
+      "Coordinated light and dark semantic roles.",
+      "Filled primary action, plain text actions, and tonal input fields.",
+      "Minimal copy, no decorative cards or pills, and no continuous animation."
+    ],
+    "rules": [
+      {
+        "name": "The Paired Roles Rule",
+        "body": "Switch the complete scheme with the device appearance; retain the matching on-primary text when changing the action fill.",
+        "section": "colors"
+      },
+      {
+        "name": "The Native Scaling Rule",
+        "body": "Let text wrap and the page scroll as the system text setting grows; the build does not truncate these roles or impose fixed text containers.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Utility Rule",
+        "body": "Separate content with spacing and text hierarchy; preserve the confirmed absence of decorative cards, pills, and section rules.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do use the complete light or dark role set, including its on-primary text.",
+      "Do preserve native text scaling, wrapping, scrolling, and safe-area padding.",
+      "Do retain minimum touch heights while allowing content to grow.",
+      "Do show status and recoverable errors as readable text."
+    ],
+    "donts": [
+      "Don't add decorative cards, pills, or section rules.",
+      "Don't add continuous animation.",
+      "Don't turn this utility direction into a final brand or audience commitment.",
+      "Don't treat idle screenshots as proof of live voice acceptance."
+    ]
+  }
+}
