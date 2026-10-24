@@ -13,7 +13,7 @@ const eventSchema = z.object({
 type Event = z.infer<typeof eventSchema>;
 const taskLabels: Record<string, string> = {
   working: 'Working', paused: 'Paused', confirming: 'Waiting for your OK', question: 'Needs your answer',
-  declined: 'Not sent', completed: 'Done', blocked: 'Stopped', unknown: 'Outcome unknown',
+  declined: 'Declined', completed: 'Done', blocked: 'Stopped', unknown: 'Outcome unknown',
 };
 const initialSession = { active: false, state: 'Ready when you are', error: '', goal: '', task: '', taskState: '', mode: 'do', screen: '', user: '', assistant: '', response: '' };
 function reduceSession(state: typeof initialSession, event: Event) {
