@@ -124,6 +124,29 @@ function visibleElements(root: UiNode, viewport: Bounds) {
 
 export type DisplaySize = { width: number; height: number };
 
+/** Portal reports display geometry alongside the tree; older builds omit it. */
+const deviceContextSchema = z.object({ device_context: z.object({ screen_bounds: z.object({ width: z.number().positive(), height: z.number().positive() }) }) });
+const rootLayoutSchema = z.object({ a11y_tree: z.object({ packageName: z.string(), boundsInScreen: boundsSchema }) });
+
+/**
+ * Display size for each observation without a screenshot per read: Portal's geometry when present,
+ * else one capture per foreground window layout. Rotation re-lays out the window, so its bounds change even for a dialog.
+ */
+export function createDisplaySource(capture: () => Promise<Uint8Array>) {
+  let display: DisplaySize | null | undefined;
+  let layout: string | undefined;
+  return async (raw: unknown): Promise<DisplaySize | null> => {
+    const context = deviceContextSchema.safeParse(raw);
+    if (context.success) return context.data.device_context.screen_bounds;
+    const current = JSON.stringify(rootLayoutSchema.safeParse(raw).data?.a11y_tree ?? null);
+    if (display === undefined || current !== layout) {
+      layout = current;
+      display = await capture().then(pngSize, () => null);
+    }
+    return display;
+  };
+}
+
 /**
  * The accessibility root is the active window, which can be a dialog or sheet.
  * Its bounds are display geometry only when it starts at the display origin and no better source exists.
@@ -225,13 +248,24 @@ export function createPortal(environment: NodeJS.ProcessEnv = process.env) {
     return decodeReply(raw);
   }
 
+  async function screenshot() {
+    const response = await request('/screenshot');
+    if (response.headers.get('content-type')?.includes('application/json')) {
+      const raw: unknown = await response.json();
+      return decodeScreenshot(decodeReply(raw));
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    pngSize(bytes);
+    return bytes;
+  }
+
+  const display = createDisplaySource(screenshot);
   return {
     version: () => json('/version'),
     async state() {
       const raw = await json('/state_full?filter=true');
-      let display: DisplaySize | null = null;
-      try { display = pngSize(await this.screenshot()); } catch { /* Window geometry remains an explicitly marked fallback. */ }
-      return parseObservation(raw, display);
+      // Without a capture, window geometry remains an explicitly marked fallback.
+      return parseObservation(raw, await display(raw));
     },
     openSettings: () => json('/app', { package: 'com.android.settings' }),
     tap: (x: number, y: number) => json('/tap', { x, y }),
@@ -242,16 +276,7 @@ export function createPortal(environment: NodeJS.ProcessEnv = process.env) {
     typeText: (text: string) => json('/keyboard/input', { base64_text: Buffer.from(text).toString('base64'), clear: true }),
     launch: (packageName: string) => json('/app', { package: packageName }),
     packages: async () => packagesSchema.parse(await json('/packages')),
-    async screenshot() {
-      const response = await request('/screenshot');
-      if (response.headers.get('content-type')?.includes('application/json')) {
-        const raw: unknown = await response.json();
-        return decodeScreenshot(decodeReply(raw));
-      }
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      pngSize(bytes);
-      return bytes;
-    },
+    screenshot,
   };
 }
 

@@ -2,7 +2,7 @@ import { measure } from './timing.ts';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import { z } from 'zod';
-import { decodeScreenshot, packagesSchema, parseObservation, pngSize, type DisplaySize, type PhoneControl, type ScreenReader } from '../mobile/portal.ts';
+import { createDisplaySource, decodeScreenshot, packagesSchema, parseObservation, type PhoneControl, type ScreenReader } from '../mobile/portal.ts';
 
 const replySchema = z.object({ id: z.string(), status: z.string(), result: z.unknown().optional(), error: z.string().optional() });
 
@@ -10,8 +10,7 @@ const replySchema = z.object({ id: z.string(), status: z.string(), result: z.unk
 export class DeviceConnection {
   private timingOwner = randomUUID();
   private pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
-  /** Geometry is refreshed for every observation, including dialogs that fit an obsolete orientation. */
-  private display: DisplaySize | null | undefined;
+  private display = createDisplaySource(() => this.capture());
   readonly phone: PhoneControl & ScreenReader;
   readonly socket: WebSocket;
   readonly id: string;
@@ -22,8 +21,7 @@ export class DeviceConnection {
     this.phone = {
       state: async () => {
         const raw = await this.request('state', { filter: true });
-        await this.capture().catch(() => { this.display = null; });
-        return parseObservation(raw, this.display ?? null);
+        return parseObservation(raw, await this.display(raw));
       },
       screenshot: () => this.capture(),
       openSettings: () => this.request('app', { package: 'com.android.settings' }),
@@ -70,7 +68,6 @@ export class DeviceConnection {
 
   private async capture() {
     const bytes = decodeScreenshot(await measure({ owner: this.timingOwner, revision: 0 }, 'portal_screenshot', () => this.request('screenshot', { hideOverlay: true })));
-    this.display = pngSize(bytes);
     return bytes;
   }
 

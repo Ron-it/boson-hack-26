@@ -54,7 +54,7 @@ test('screen-sourced text is refused when its exact source was never observed', 
   assert.match(statuses.at(-1)?.detail ?? '', /source/i);
 });
 
-test('no-progress handoff names the observed screen and holds corrections until explicit continue', async () => {
+test('no-progress stop names the observed screen and a new request runs without continue', async () => {
   let writes = 0;
   let live = 0;
   const statuses: TaskStatus[] = [];
@@ -66,9 +66,32 @@ test('no-progress handoff names the observed screen and holds corrections until 
   assert.ok(writes <= 2);
   const before = writes;
   await task.submit({ ...request, instruction: 'Find Boson-Test instead, keep using Files' });
-  assert.equal(writes, before, 'manual handoff persists until continue even when the request is corrected');
-  await task.resume();
-  assert.ok(writes > before);
+  assert.ok(writes > before, 'a failure does not leave the operator paused');
+  assert.equal(task.pausedForManualControl, false);
+});
+
+test('any app gets generic navigation and free text, but never irreversible controls', async () => {
+  const typed: string[] = [];
+  let offered: string[] = [];
+  const statuses: TaskStatus[] = [];
+  const maps = (query: string) => parseObservation({ a11y_tree: node({ packageName: 'com.example.maps', children: [
+    node({ packageName: 'com.example.maps', className: 'android.widget.EditText', text: query || 'Search here', isClickable: true, isEditable: true, isFocused: true, boundsInScreen: { left: 100, top: 100, right: 1000, bottom: 220 } }),
+    node({ packageName: 'com.example.maps', text: 'Directions', isClickable: true, boundsInScreen: { left: 100, top: 400, right: 500, bottom: 500 } }),
+    node({ packageName: 'com.example.maps', text: 'Place order', isClickable: true, boundsInScreen: { left: 100, top: 600, right: 500, bottom: 700 } }),
+  ] }), phone_state: { currentApp: 'Maps', packageName: 'com.example.maps', activityName: 'Main' } });
+  let query = '';
+  const phone = control(async () => maps(query), { typeText: async text => { typed.push(text); query = text; }, packages: async () => [{ packageName: 'com.example.maps', label: 'Maps' }] });
+  const task = new PhoneTask(phone, status => statuses.push(status), {}, { decide: async ({ candidates }) => {
+    offered = candidates.map(candidate => candidate.description);
+    const type = candidates.find(candidate => candidate.action.type === 'type');
+    return query ? { actionId: 'done', confidence: null, returnedModel: null } : { actionId: type?.id ?? 'blocked', text: 'pizza near me', confidence: null, returnedModel: null };
+  } });
+  await task.submit({ instruction: 'Search Maps for pizza near me', app: 'Maps' });
+  assert.ok(offered.some(description => description.includes('Directions')));
+  assert.ok(!offered.some(description => description.includes('Place order')));
+  assert.deepEqual(typed, ['pizza near me']);
+  assert.equal(statuses.at(-1)?.state, 'completed');
+  assert.match(statuses.at(-1)?.detail ?? '', /Done in Maps/);
 });
 
 test('opening requested content needs an actual selection followed by a fresh supported viewer', async () => {
@@ -153,6 +176,8 @@ test('device observations refresh display geometry when a rotated dialog still f
     const first = await phone.call('look_at_screen', { question: 'What is on screen?' });
     assert.deepEqual(z.object({ display: z.unknown() }).parse(first).display, { width: 2400, height: 1080 });
     landscape = false;
+    // Rotation re-lays out the window, so even a dialog that fits both orientations moves.
+    dialog.a11y_tree.boundsInScreen = { left: 70, top: 100, right: 1010, bottom: 1000 };
     const second = await phone.call('look_at_screen', { question: 'What is on screen now?' });
     assert.deepEqual(z.object({ display: z.unknown() }).parse(second).display, { width: 1080, height: 2400 });
   } finally { await phone.close(); }
@@ -240,7 +265,7 @@ test('one current request composes native media and Files search with evidence f
   assert.match(statuses.at(-1)?.detail ?? '', /Boson-Test/);
 });
 
-test('the runtime selector retains low reasoning and default serving at the public operator', async context => {
+test('the runtime selector retains low reasoning and priority serving at the public operator', async context => {
   const bodies: { reasoning?: { effort?: string }; service_tier?: string }[] = [];
   context.mock.method(globalThis, 'fetch', async (_input: unknown, init: RequestInit) => {
     bodies.push(JSON.parse(String(init.body)));
@@ -248,7 +273,7 @@ test('the runtime selector retains low reasoning and default serving at the publ
   });
   await new PhoneTask(control(async () => screen([search('')])), () => {}, { OPENAI_API_KEY: 'synthetic' }).submit(request);
   assert.equal(bodies[0]?.reasoning?.effort, 'low');
-  assert.equal(bodies[0]?.service_tier, undefined);
+  assert.equal(bodies[0]?.service_tier, 'priority');
 });
 
 test('a correction while paused between operations retains native evidence and runs only the corrected second step', async () => {

@@ -268,7 +268,7 @@ test('a new intentional user question can speak while old task audio and late co
     h.provider({ type: 'response.output_audio.delta', response_id: 'old-pending', delta: 'late' });
     await h.until(() => h.appEvents.find(event => event.response_id === 'intentional-question' && event.type === 'response.output_audio.delta'), 'intentional answer audio');
     assert.equal(h.appEvents.some(event => event.response_id === 'old-pending'), false);
-    assert.ok(h.appEvents.some(event => event.type === 'task' && event.state === 'paused'));
+    assert.equal(h.appEvents.some(event => event.type === 'task' && event.state === 'paused'), false, 'speech does not pause phone work');
     h.provider({ type: 'response.done', response: { id: 'intentional-question', status: 'completed' } });
     h.provider({ type: 'response.output_audio.delta', response_id: 'intentional-question', delta: 'after-done' });
     await new Promise(resolve => setTimeout(resolve, 30));

@@ -78,7 +78,7 @@ test('help with this reads the visible app as untrusted controls without opening
     assert.equal(output.app, 'Example Shop');
     assert.deepEqual(output.display, { width: 1080, height: 2424 }, 'Dialog bounds must not become the display size');
     const reason = output.controls.find(control => control.label === 'Wrong size');
-    assert.deepEqual(reason, { id: 3, label: 'Wrong size', role: 'RadioButton', resourceId: 'reason_size', checked: true, clickable: true, parent: 2, bounds: { left: 100, top: 1040, right: 980, bottom: 1130 }, position: 'middle' });
+    assert.deepEqual(reason, { label: 'Wrong size', role: 'RadioButton', checked: true, clickable: true, position: 'middle' });
     assert.equal(output.controls.find(control => control.label === 'Start return')?.position, 'middle right');
     assert.match(output.untrusted, /never follow instructions/i);
     assert.deepEqual(phone.portalSeen.filter(method => method !== 'state' && method !== 'screenshot'), [], 'Reading help must not mutate the phone');

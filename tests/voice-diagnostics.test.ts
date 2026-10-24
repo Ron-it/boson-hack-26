@@ -26,7 +26,7 @@ test('public multi-turn diagnostics distinguish no tool, schema rejection, guide
     h.provider({ type: 'response.done', response: { id: privateContent, status: 'completed', output: [] } });
     await h.until(() => diagnostics.find(event => event.category === 'no_tool'), 'completed user response without a tool');
     h.speak();
-    await h.call('update_phone_task', { instruction: privateContent, brightness: privateContent });
+    await h.call('update_phone_task', { brightness: privateContent });
     assert.ok(diagnostics.some(event => event.result === 'schema_rejected' && event.tool === 'update_phone_task'));
     h.speak();
     await h.call(privateContent, {});
