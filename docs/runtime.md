@@ -51,6 +51,18 @@ gamma slider; adaptive brightness may subsequently change the value. Night Light
 continues through UI navigation. A model's completion judgment remains distinct
 from a separate Android-state verification.
 
+Contextual help reads the visible app without opening Settings. `look_at_screen`
+returns labeled controls with role, short resource ID, state, parent, absolute
+bounds and rough position. Display size comes from a Portal screenshot's PNG
+header, cached per connection and recaptured when a window falls outside it, so
+a dialog's window is not mistaken for the display. Without a capture, only a
+window at the display origin supplies geometry; otherwise coordinate actions are
+withheld. When fewer than three controls are labeled, a current screenshot goes
+to the hosted navigation model as image input; Boson receives only its text.
+If capture or that model is unavailable, the tool reports unavailable. Guide
+mode refuses task, brightness and continue tools until Boson sets do mode on
+the user's request. Screen text is labeled untrusted in every tool result.
+
 The server logs connection, audio-flow, tool-name, task-state, and revision events.
 It does not log audio, spoken transcripts, goals, screen contents, or API keys.
 The original CLI experiments still save private traces in ignored `artifacts/`.
