@@ -11,7 +11,11 @@ const eventSchema = z.object({
   transcript: z.string().optional(), delta: z.string().optional(), response_id: z.string().optional(),
 });
 type Event = z.infer<typeof eventSchema>;
-const initialSession = { active: false, state: 'Ready when you are', error: '', goal: '', task: '', mode: 'do', screen: '', user: '', assistant: '', response: '' };
+const taskLabels: Record<string, string> = {
+  working: 'Working', paused: 'Paused', confirming: 'Waiting for your OK', question: 'Needs your answer',
+  declined: 'Not sent', completed: 'Done', blocked: 'Stopped', unknown: 'Outcome unknown',
+};
+const initialSession = { active: false, state: 'Ready when you are', error: '', goal: '', task: '', taskState: '', mode: 'do', screen: '', user: '', assistant: '', response: '' };
 function reduceSession(state: typeof initialSession, event: Event) {
   if (event.type === 'reset') return initialSession;
   if (event.type === 'notice') return { ...state, error: event.message || '' };
@@ -20,7 +24,7 @@ function reduceSession(state: typeof initialSession, event: Event) {
     if (event.state === 'stopped') return { ...state, active: false, state: 'Session ended' };
     return { ...state, active: true, state: event.detail || 'Listening' };
   }
-  if (event.type === 'task') return { ...state, goal: event.goal || '', task: event.state === 'completed' ? 'Done' : event.detail || '' };
+  if (event.type === 'task') return { ...state, goal: event.goal || '', task: event.detail || '', taskState: taskLabels[event.state ?? ''] ?? '' };
   if (event.type === 'help') {
     const screen = event.state === 'unavailable' ? `Can't see this screen. ${event.detail || ''}` : event.detail;
     return { ...state, mode: event.mode || state.mode, screen: screen ?? state.screen };
@@ -95,7 +99,8 @@ function PhoneScreen() {
       {!!session.goal && <View style={styles.section}>
         <Text style={[styles.label, { color: colors.secondary }]}>Current request</Text>
         <Text style={[styles.body, { color: colors.text }]}>{session.goal}</Text>
-        <Text style={[styles.body, { color: colors.secondary }]}>{session.task}</Text>
+        {!!session.taskState && <Text style={[styles.label, { color: colors.secondary, marginTop: 8 }]}>{session.taskState}</Text>}
+        <Text selectable style={[styles.body, { color: colors.secondary }]}>{session.task}</Text>
       </View>}
       {(!!session.user || !!session.assistant) && <View style={styles.section}>
         {!!session.user && <><Text style={[styles.label, { color: colors.secondary }]}>You</Text><Text selectable style={[styles.body, { color: colors.text }]}>{session.user}</Text></>}

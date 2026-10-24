@@ -78,6 +78,8 @@ function describeElement(node: UiNode, index: number, text: string, parent: numb
     className: node.className,
     role: node.className.slice(node.className.lastIndexOf('.') + 1),
     text: node.isPassword ? '[password field]' : text,
+    /** The node's own content description, such as a message bubble's sender and delivery state. */
+    description: node.isPassword ? '' : node.contentDescription,
     bounds: node.boundsInScreen,
     clickable: node.isClickable,
     enabled: node.isEnabled,
@@ -163,6 +165,9 @@ export function decodeScreenshot(result: unknown) {
 
 type Parameters = Record<string, string | number | boolean>;
 
+/** Launchable apps as Portal lists them. */
+export const packagesSchema = z.array(z.object({ packageName: z.string(), label: z.string() }));
+
 export function createPortal(environment: NodeJS.ProcessEnv = process.env) {
   const config = configuration.parse(environment);
   const base = new URL(config.PORTAL_URL);
@@ -228,6 +233,10 @@ export function createPortal(environment: NodeJS.ProcessEnv = process.env) {
     swipe: (startX: number, startY: number, endX: number, endY: number) =>
       json('/swipe', { startX, startY, endX, endY, duration: 300 }),
     back: () => json('/global', { action: 1 }),
+    /** Replaces the focused field's text. It never presses Enter or an IME send action. */
+    typeText: (text: string) => json('/keyboard/input', { base64_text: Buffer.from(text).toString('base64'), clear: true }),
+    launch: (packageName: string) => json('/app', { package: packageName }),
+    packages: async () => packagesSchema.parse(await json('/packages')),
     async screenshot() {
       const response = await request('/screenshot');
       if (response.headers.get('content-type')?.includes('application/json')) {
@@ -243,7 +252,7 @@ export function createPortal(environment: NodeJS.ProcessEnv = process.env) {
 
 export type PhoneObservation = ReturnType<typeof parseObservation>;
 
-export type PhoneControl = Pick<ReturnType<typeof createPortal>, 'state' | 'openSettings' | 'tap' | 'swipe' | 'back'>;
+export type PhoneControl = Pick<ReturnType<typeof createPortal>, 'state' | 'openSettings' | 'tap' | 'swipe' | 'back' | 'typeText' | 'launch' | 'packages'>;
 
 /** Read-only access for contextual help. It deliberately has no mutation methods. */
 export type ScreenReader = Pick<ReturnType<typeof createPortal>, 'state' | 'screenshot'>;

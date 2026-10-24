@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import { z } from 'zod';
-import { decodeScreenshot, parseObservation, pngSize, type DisplaySize, type PhoneControl, type ScreenReader } from '../mobile/portal.ts';
+import { decodeScreenshot, packagesSchema, parseObservation, pngSize, type DisplaySize, type PhoneControl, type ScreenReader } from '../mobile/portal.ts';
 
 const replySchema = z.object({ id: z.string(), status: z.string(), result: z.unknown().optional(), error: z.string().optional() });
 
@@ -33,6 +33,9 @@ export class DeviceConnection {
       tap: (x, y) => this.request('tap', { x, y }),
       swipe: (startX, startY, endX, endY) => this.request('swipe', { startX, startY, endX, endY, duration: 300 }),
       back: () => this.request('global', { action: 1 }),
+      typeText: text => this.request('keyboard/input', { base64_text: Buffer.from(text).toString('base64'), clear: true }),
+      launch: packageName => this.request('app', { package: packageName }),
+      packages: async () => packagesSchema.parse(await this.request('packages')),
     };
     socket.on('message', data => {
       try {
