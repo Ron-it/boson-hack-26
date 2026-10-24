@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "Phone voice",
+    "slug": "boson-phone-voice",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "android": {
+      "package": "dev.ronit.bosonphone",
+      "predictiveBackGestureEnabled": true,
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS"
+      ]
+    },
+    "plugins": [
+      ["expo-build-properties", { "android": { "minSdkVersion": 31 } }]
+    ]
+  }
+}
