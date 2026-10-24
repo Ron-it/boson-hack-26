@@ -195,7 +195,7 @@ test('a field reused in a changed parent context is not treated as the old targe
   assert.equal(decisions, 2);
 });
 
-test('a generic app outcome is retained when a mixed native request needs an order', async () => {
+test('a blocked app outcome remains unfinished after its native setting is established', async () => {
   const statuses: TaskStatus[] = [];
   let commands = 0;
   const phone = control(async () => screen([search('')]));
@@ -203,8 +203,10 @@ test('a generic app outcome is retained when a mixed native request needs an ord
     commands++;
     return { status: 'completed', stream: 'media', requestedPercent: 40, requestedIndex: 6, observedIndex: 6, minIndex: 0, maxIndex: 15 };
   }).submit({ ...request, app: undefined, mediaVolume: 40 });
-  assert.equal(statuses.at(-1)?.state, 'question');
-  assert.equal(commands, 0);
+  assert.equal(statuses.at(-1)?.state, 'blocked');
+  assert.equal(commands, 1);
+  assert.equal(statuses.at(-1)?.progress?.find(step => step.id === 'media')?.state, 'completed');
+  assert.equal(statuses.at(-1)?.progress?.find(step => step.id === 'app')?.state, 'blocked');
 });
 
 test('an unexpected unsupported dialog produces a grounded handoff without typing or confirming it', async () => {
@@ -218,4 +220,118 @@ test('an unexpected unsupported dialog produces a grounded handoff without typin
   assert.equal(mutations, 0);
   assert.equal(statuses.at(-1)?.state, 'blocked');
   assert.match(statuses.at(-1)?.detail ?? '', /New folder/);
+});
+
+test('one current request composes native media and Files search with evidence for both', async () => {
+  let query = '';
+  let volume = 0;
+  const statuses: TaskStatus[] = [];
+  const phone = control(async () => screen([search(query), ...(query ? [result()] : [])]), { typeText: async text => { query = text; } });
+  const task = new PhoneTask(phone, status => statuses.push(status), {}, { decide: async ({ candidates }) => ({ actionId: query ? 'done' : candidates.find(candidate => candidate.action.type === 'type')?.id ?? 'blocked', confidence: null, returnedModel: null }) }, async (name, args) => {
+    if (name === 'set_media_volume') { volume = Number(args.percent); return { status: 'completed', stream: 'media', requestedPercent: volume, requestedIndex: 3, observedIndex: 3, minIndex: 0, maxIndex: 10 }; }
+    return { status: 'observed', stream: 'media', observedIndex: 3, minIndex: 0, maxIndex: 10 };
+  });
+  await task.submit({ ...request, mediaVolume: 30 });
+  assert.equal(query, 'Boson-Test');
+  assert.equal(volume, 30);
+  assert.equal(statuses.at(-1)?.progress?.find(step => step.id === 'media')?.evidence?.kind, 'native_media');
+  assert.equal(statuses.at(-1)?.state, 'completed');
+  assert.match(statuses.at(-1)?.detail ?? '', /media volume/i);
+  assert.match(statuses.at(-1)?.detail ?? '', /Boson-Test/);
+});
+
+test('the runtime selector retains low reasoning and default serving at the public operator', async context => {
+  const bodies: { reasoning?: { effort?: string }; service_tier?: string }[] = [];
+  context.mock.method(globalThis, 'fetch', async (_input: unknown, init: RequestInit) => {
+    bodies.push(JSON.parse(String(init.body)));
+    return new Response(JSON.stringify({ status: 'completed', model: 'gpt-6.1-sol', output: [{ type: 'message', content: [{ type: 'output_text', text: '{"actionId":"blocked"}' }] }] }));
+  });
+  await new PhoneTask(control(async () => screen([search('')])), () => {}, { OPENAI_API_KEY: 'synthetic' }).submit(request);
+  assert.equal(bodies[0]?.reasoning?.effort, 'low');
+  assert.equal(bodies[0]?.service_tier, undefined);
+});
+
+test('a correction while paused between operations retains native evidence and runs only the corrected second step', async () => {
+  let query = '';
+  let writes = 0;
+  let paused = false;
+  const statuses: TaskStatus[] = [];
+  const phone = control(async () => screen([search(query), ...(query ? [result()] : [])]), { typeText: async text => { query = text; } });
+  const task = new PhoneTask(phone, status => {
+    statuses.push(status);
+    if (!paused && status.state === 'working' && status.progress?.some(step => step.id === 'media' && step.state === 'completed')) {
+      paused = true;
+      task.pause('Let me correct the search before you open it');
+    }
+  }, {}, { decide: async ({ candidates }) => ({ actionId: query ? 'done' : candidates.find(candidate => candidate.action.type === 'type')?.id ?? 'blocked', confidence: null, returnedModel: null }) }, async (name, args) => {
+    if (name === 'set_media_volume') { writes++; return { status: 'completed', stream: 'media', requestedPercent: args.percent, requestedIndex: 3, observedIndex: 3, minIndex: 0, maxIndex: 10 }; }
+    return { status: 'observed', stream: 'media', observedIndex: 3, minIndex: 0, maxIndex: 10 };
+  });
+  await task.submit({ ...request, mediaVolume: 30 });
+  assert.equal(query, '');
+  assert.equal(statuses.at(-1)?.state, 'paused');
+  await task.submit({ ...request, instruction: 'Keep media 30%, search Boson instead', mediaVolume: 30, values: [{ field: 'search', text: 'Boson', source: { kind: 'request' } }], outcome: { kind: 'search_results', query: 'Boson' } });
+  assert.equal(query, '');
+  await task.resume();
+  assert.equal(query, 'Boson');
+  assert.equal(writes, 1);
+  assert.equal(statuses.at(-1)?.state, 'completed');
+});
+
+test('Clock approval belongs to its current operation and an unknown intent is not replayed while the app step continues', async () => {
+  let query = '';
+  const creates: number[] = [];
+  const statuses: TaskStatus[] = [];
+  const phone = control(async () => screen([search(query), ...(query ? [result()] : [])]), { typeText: async text => { query = text; } });
+  const task = new PhoneTask(phone, status => statuses.push(status), {}, { decide: async ({ candidates }) => ({ actionId: query ? 'done' : candidates.find(candidate => candidate.action.type === 'type')?.id ?? 'blocked', confidence: null, returnedModel: null }) }, async (name, args) => {
+    if (name === 'resolve_handler') return { status: 'observed', available: true, handlerPackage: 'test.clock' };
+    if (name === 'create_timer') { creates.push(Number(args.seconds)); return { status: 'handoff', handlerPackage: 'test.clock', note: 'Event not independently verified' }; }
+    throw new Error('Unexpected command');
+  });
+  await task.submit({ ...request, timer: { seconds: 300, label: 'First' } });
+  const old = statuses.at(-1)?.proposal;
+  assert.ok(old && old.operation === 'create_timer');
+  await task.submit({ ...request, instruction: 'Actually ten minutes, then find Boson-Test', timer: { seconds: 600, label: 'Corrected' } });
+  const current = statuses.at(-1)?.proposal;
+  assert.ok(current && current.operation === 'create_timer');
+  assert.notEqual(current.id, old.id);
+  assert.equal(task.answer(old.id, true).status, 'expired');
+  const accepted = task.answer(current.id, true);
+  assert.equal(task.answer(current.id, true).status, 'expired');
+  await accepted.settled;
+  assert.deepEqual(creates, [600]);
+  assert.equal(statuses.at(-1)?.state, 'unknown');
+  assert.equal(query, '');
+  await task.resume();
+  assert.equal(query, 'Boson-Test');
+  assert.deepEqual(creates, [600]);
+  assert.equal(statuses.at(-1)?.state, 'unknown');
+  assert.equal(statuses.at(-1)?.progress?.find(step => step.id === 'timer')?.state, 'unknown');
+  assert.equal(statuses.at(-1)?.progress?.find(step => step.id === 'timer')?.evidence?.kind, 'intent_handoff');
+  assert.equal(statuses.at(-1)?.progress?.find(step => step.id === 'app')?.state, 'completed');
+  assert.equal(statuses.some(status => status.state === 'completed'), false);
+});
+
+test('continue rechecks completed UI evidence while retaining an earlier unknown Clock outcome', async () => {
+  let query = '';
+  let creates = 0;
+  const statuses: TaskStatus[] = [];
+  const phone = control(async () => screen([search(query), ...(query ? [result()] : [])]), { typeText: async text => { query = text; } });
+  const task = new PhoneTask(phone, status => statuses.push(status), {}, { decide: async ({ candidates }) => ({ actionId: query === 'Boson-Test' ? 'done' : candidates.find(candidate => candidate.action.type === 'type')?.id ?? 'blocked', confidence: null, returnedModel: null }) }, async name => {
+    if (name === 'resolve_handler') return { status: 'observed', available: true, handlerPackage: 'clock' };
+    creates++;
+    return { status: 'handoff', handlerPackage: 'clock', note: 'Not verified' };
+  });
+  await task.submit({ ...request, timer: { seconds: 60, label: 'Test' } });
+  const proposal = statuses.at(-1)?.proposal;
+  assert.ok(proposal);
+  await task.answer(proposal.id, true).settled;
+  await task.resume();
+  assert.equal(query, 'Boson-Test');
+  task.pause('Manual control');
+  query = 'Something else';
+  await task.resume();
+  assert.equal(query, 'Boson-Test');
+  assert.equal(creates, 1);
+  assert.equal(statuses.at(-1)?.state, 'unknown');
 });

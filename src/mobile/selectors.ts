@@ -141,7 +141,7 @@ export function createSelector(provider: z.infer<typeof providerSchema>, environ
           method: 'POST', signal: input.signal,
           headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model, store: false, instructions, reasoning: { effort: 'medium' }, service_tier: 'priority', max_output_tokens: 2048,
+            model, store: false, instructions, reasoning: { effort: 'low' }, max_output_tokens: 2048,
             input: [{ role: 'user', content: [
               { type: 'input_text', text: JSON.stringify({ ...decisionContext(input), actions: input.candidates.map(({ id, description }) => ({ id, description })) }) },
               ...(input.screenshot ? [{ type: 'input_image', image_url: `data:image/png;base64,${Buffer.from(input.screenshot).toString('base64')}` }] : []),
