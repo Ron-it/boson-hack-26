@@ -70,7 +70,7 @@ test('no-progress stop names the observed screen and a new request runs without 
   assert.equal(task.pausedForManualControl, false);
 });
 
-test('any app gets generic navigation and free text, but never irreversible controls', async () => {
+test('any app gets generic navigation and free text, and irreversible controls only ask first', async () => {
   const typed: string[] = [];
   let offered: string[] = [];
   const statuses: TaskStatus[] = [];
@@ -88,10 +88,50 @@ test('any app gets generic navigation and free text, but never irreversible cont
   } });
   await task.submit({ instruction: 'Search Maps for pizza near me', app: 'Maps' });
   assert.ok(offered.some(description => description.includes('Directions')));
-  assert.ok(!offered.some(description => description.includes('Place order')));
+  assert.ok(offered.some(description => description.startsWith('Ask the user, then tap "Place order"')));
+  assert.ok(!offered.some(description => description.startsWith('Tap "Place order"')));
   assert.deepEqual(typed, ['pizza near me']);
   assert.equal(statuses.at(-1)?.state, 'completed');
   assert.match(statuses.at(-1)?.detail ?? '', /Done in Maps/);
+});
+
+test('an irreversible tap is proposed first and dispatched only after approval', async () => {
+  const taps: number[] = [];
+  const statuses: TaskStatus[] = [];
+  const shop = parseObservation({ a11y_tree: node({ packageName: 'com.example.shop', children: [
+    node({ packageName: 'com.example.shop', text: 'Place order', isClickable: true, boundsInScreen: { left: 100, top: 600, right: 500, bottom: 700 } }),
+  ] }), phone_state: { currentApp: 'Shop', packageName: 'com.example.shop', activityName: 'Cart' } });
+  let ordered = false;
+  const phone = control(async () => ordered ? parseObservation({ a11y_tree: node({ packageName: 'com.example.shop', children: [node({ packageName: 'com.example.shop', text: 'Order placed' })] }), phone_state: { currentApp: 'Shop', packageName: 'com.example.shop', activityName: 'Done' } }) : shop,
+    { tap: async (_x, y) => { taps.push(y); ordered = true; } });
+  const task = new PhoneTask(phone, status => statuses.push(status), {}, { decide: async ({ candidates }) => ({
+    actionId: ordered ? 'done' : candidates.find(candidate => candidate.action.type === 'confirm_tap')?.id ?? 'blocked', text: ordered ? 'Your order is placed.' : null, confidence: null, returnedModel: null }) });
+  await task.submit({ instruction: 'Place my order in Shop' });
+  const proposal = statuses.at(-1)?.proposal;
+  assert.equal(statuses.at(-1)?.state, 'confirming');
+  assert.ok(proposal?.operation === 'tap' && proposal.detail.includes('Place order'));
+  assert.deepEqual(taps, [], 'nothing is tapped before approval');
+  await task.answer(proposal.id, true).settled;
+  assert.deepEqual(taps, [650]);
+  assert.equal(statuses.at(-1)?.state, 'completed');
+  assert.equal(statuses.at(-1)?.detail, 'Your order is placed.');
+});
+
+test('after the user answers a question, the operator acts instead of asking again', async () => {
+  const statuses: TaskStatus[] = [];
+  let asked = 0;
+  const phone = control(async () => screen([search('')]));
+  const task = new PhoneTask(phone, status => statuses.push(status), {}, { decide: async ({ candidates }) => {
+    const ask = candidates.find(candidate => candidate.id === 'ask');
+    if (ask) { asked++; return { actionId: 'ask', text: 'Which folder?', confidence: null, returnedModel: null }; }
+    return { actionId: 'done', text: 'Opened Downloads.', confidence: null, returnedModel: null };
+  } });
+  await task.submit({ instruction: 'Open my folder in Files' });
+  assert.equal(statuses.at(-1)?.state, 'question');
+  assert.equal(statuses.at(-1)?.detail, 'Which folder?');
+  await task.submit({ instruction: 'Open my Downloads folder in Files' });
+  assert.equal(asked, 1, 'ask is not offered right after an answer');
+  assert.equal(statuses.at(-1)?.state, 'completed');
 });
 
 test('opening requested content needs an actual selection followed by a fresh supported viewer', async () => {

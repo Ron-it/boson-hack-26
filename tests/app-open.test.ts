@@ -14,7 +14,7 @@ test('public voice app-open request completes from fresh foreground proof withou
   } } });
   try {
     const accepted = await h.call('update_phone_task', request);
-    assert.deepEqual(accepted, { status: 'accepted', note: 'Working on the complete request. Wait for the operator outcome; do not resubmit.' });
+    assert.deepEqual(accepted, { status: 'accepted', note: 'Working on the complete request. Wait for the task outcome; do not resubmit.' });
     const result = await h.until(() => h.appEvents.find(event => event.type === 'task' && ['completed', 'blocked', 'unknown', 'question'].includes(String(event.state))), 'app-open outcome');
     assert.equal(result.state, 'completed', String(result.detail));
     assert.deepEqual(result.evidence, { kind: 'app_opened', packageName: 'com.google.android.apps.messaging', detail: 'Observed Messages in the foreground.' });
@@ -123,7 +123,7 @@ test('observed provider JSON-encoded object normalizes to the typed app-open out
   const h = await harness(app.portal);
   try {
     const accepted = await h.call('update_phone_task', { instruction: 'Open Messages', app: 'Messages', outcome: JSON.stringify({ kind: 'app_opened' }) });
-    assert.deepEqual(accepted, { status: 'accepted', note: 'Working on the complete request. Wait for the operator outcome; do not resubmit.' });
+    assert.deepEqual(accepted, { status: 'accepted', note: 'Working on the complete request. Wait for the task outcome; do not resubmit.' });
     const completed = await h.until(() => h.appEvents.find(event => event.type === 'task' && event.state === 'completed'), 'normalized app-open result');
     assert.deepEqual(completed.evidence, { kind: 'app_opened', packageName: 'com.google.android.apps.messaging', detail: 'Observed Messages in the foreground.' });
   } finally { await h.close(); }

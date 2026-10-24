@@ -272,6 +272,12 @@ export function createPortal(environment: NodeJS.ProcessEnv = process.env) {
     swipe: (startX: number, startY: number, endX: number, endY: number) =>
       json('/swipe', { startX, startY, endX, endY, duration: 300 }),
     back: () => json('/global', { action: 1 }),
+    /** Accessibility global action; see globalActions. */
+    global: (action: number) => json('/global', { action }),
+    /** Android key code, for example 66 for Enter. */
+    key: (code: number) => json('/keyboard/key', { key_code: code }),
+    /** Opens an implicit VIEW intent for any URI scheme the phone resolves (tel:, geo:, https:, app links). */
+    deepLink: (uri: string) => json('/app/deep-link', { deepLink: uri }),
     /** Replaces the focused field's text. It never presses Enter or an IME send action. */
     typeText: (text: string) => json('/keyboard/input', { base64_text: Buffer.from(text).toString('base64'), clear: true }),
     launch: (packageName: string) => json('/app', { package: packageName }),
@@ -283,7 +289,11 @@ export function createPortal(environment: NodeJS.ProcessEnv = process.env) {
 export type PhoneObservation = ReturnType<typeof parseObservation>;
 
 export type PhoneControl = Pick<ReturnType<typeof createPortal>, 'state' | 'openSettings' | 'tap' | 'swipe' | 'back' | 'typeText' | 'launch' | 'packages'>
-  & Partial<Pick<ReturnType<typeof createPortal>, 'screenshot'>>;
+  & Partial<Pick<ReturnType<typeof createPortal>, 'screenshot' | 'global' | 'key' | 'deepLink'>>;
+
+/** Android accessibility global actions that Portal performs without any model call. */
+export const globalActions = { back: 1, home: 2, recent_apps: 3, notifications: 4, quick_settings: 5 } as const;
+export type GlobalAction = keyof typeof globalActions;
 
 /** Read-only access for contextual help. It deliberately has no mutation methods. */
 export type ScreenReader = Pick<ReturnType<typeof createPortal>, 'state' | 'screenshot'>;

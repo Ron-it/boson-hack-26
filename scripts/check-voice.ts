@@ -25,7 +25,7 @@ async function main() {
       const finish = (error?: Error) => { clearTimeout(timeout); error ? reject(error) : resolve(); };
       socket.once('error', () => finish(new Error('Voice transport failed')));
       socket.once('close', () => finish(new Error('Voice connection closed before the check finished')));
-      socket.once('open', () => socket.send(JSON.stringify({ type: 'session.update', session: bosonSessionConfiguration })));
+      socket.once('open', () => socket.send(JSON.stringify({ type: 'session.update', session: bosonSessionConfiguration() })));
       socket.on('message', data => {
         try {
           const event = eventSchema.parse(JSON.parse(data.toString()));
