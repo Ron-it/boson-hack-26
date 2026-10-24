@@ -156,7 +156,7 @@ Tandem is a near-black, dark-only Android app in the Boson AI design system. Eac
 
 The mark tells the story. A white dot is you. A signal-green arc beside it is Tandem, listening and answering. The source of truth is `mobile/App.tsx`. The Paper design file is the "Tandem app" page in "Boson AI Design System" (https://app.paper.design/file/01M5B4ADQSXTWS4JWY87EBYE4C/p-5-0).
 
-Rendered evidence in `.impeccable/review/`: home while unpaired (`tandem-emulator-5554.png`), Settings (`tandem-settings.png`), and home at 1.3x font scale (`tandem-large.png`). The Live, Working and Confirm states exist in code but were not captured on a device, because no server was available.
+Rendered evidence in `.impeccable/review/`: home while unpaired (`tandem-emulator-5554.png`), Settings (`tandem-settings.png`), home at 1.3x font scale (`tandem-large.png`), and the Family voice section idle, recording and reflected on Home (`family-voice-settings.png`, `family-voice-recording.png`, `family-voice-home.png`). The Live, Working and Confirm states exist in code but were not captured on a device, because no server was available.
 
 **Key Characteristics:**
 - Dark only. No light scheme.
@@ -170,12 +170,12 @@ Rendered evidence in `.impeccable/review/`: home while unpaired (`tandem-emulato
 Cool near-black neutrals from the Boson foundations, with one signal green.
 
 ### Primary
-- **Signal Green** (accent): fill of the full-width primary button, the live dot and live state text, Working and Done status text, the selected preset underline, input focus border, text selection, "Turn on" permission actions, and the Paired check.
+- **Signal Green** (accent): fill of the full-width primary button, the live dot and live state text, the recording dot and timer, Working and Done status text, the selected preset and language underline, input focus border, text selection, "Turn on" permission actions, and the Paired check.
 - **Pressed Green** (accent-pressed): primary button while pressed.
 - **Ink on Green** (on-accent): label and icon on the primary button. Same value as the canvas.
 
 ### Secondary
-- **Sage** (green-soft): Settings section labels ("Permissions", "Connection") and the "Paired" text. A calm green for structure, never for action.
+- **Sage** (green-soft): Settings section labels ("Permissions", "Family voice", "Connection") and the "Paired" and "Your voice" text. A calm green for structure, never for action.
 
 ### Neutral
 - **Canvas** (canvas): the whole app background, also the app and splash background.
@@ -208,7 +208,7 @@ Cool near-black neutrals from the Boson foundations, with one signal green.
 - **Status:** task state line on Live (Working, Done, Blocked), colored by state.
 - **Tab:** preset names.
 - **Input:** server address and pairing code values.
-- **Hint:** the one-line description under the selected preset.
+- **Hint:** the one-line description under the selected preset. Family's names its language and whether it uses your voice.
 - **Label:** section labels in Settings (in sage) and the "Tandem" reply label (in muted).
 - **Detail:** row details, quote meta, field labels.
 - **Caption:** centered 13px line under the main button, and the left-aligned about line in Settings.
@@ -228,7 +228,7 @@ Every screen has the same skeleton, top to bottom:
 Screens:
 - **Home:** display question and lead at the bottom of the main area, then presets, then "Start talking" (with mic icon) or "Pair this phone" when unpaired.
 - **Live:** the top bar swaps the settings icon for an 8px green dot and live state text ("Listening", "Waiting for you"). Headline, then a status line colored by task state, task detail, and Tandem's reply. For a message confirmation: headline, the message quote block, and a spoken instruction ("Say yes to send, or no to change it"). There are no confirm buttons; the answer is spoken. Stop is the single action.
-- **Settings:** back arrow and title in the top bar. Permissions rows (72 min height) with trailing "On" or "Turn on". Connection section 40 below with labeled inputs, then a row with "Paired" on the left and a small Save button on the right. The about caption sits at the bottom.
+- **Settings:** back arrow and title in the top bar. Permissions rows (72 min height) with trailing "On" or "Turn on". Family voice section 40 below: scrollable language tabs, the paragraph to read aloud in quote type on the canvas, then a row with the voice status on the left ("Standard voice", "Recording 0:07", "Making your voice…", "Your voice") and a small Record, Done or Record again button on the right, and a left-aligned consent caption. Connection section 40 below with labeled inputs, then a row with "Paired" on the left and a small Save button on the right. The about caption sits at the bottom.
 
 **The Thumb Rule.** The main area grows and the content falls to the bottom. Never pin content to the top and leave the bottom empty.
 
@@ -257,6 +257,7 @@ The mark is drawn in a 108 viewBox: a white circle (cx 44, cy 54, r 11) and a gr
 ### Preset tabs
 - **Style:** text tabs, 48 tall, 2px underline. Not pills.
 - **State:** selected is strong text with a green underline. Others are muted with a clear underline. Exposed as a radio group.
+- **Languages:** the Family language picker in Settings reuses the same tabs in a horizontal scroll, labeled in each language's own name.
 
 ### Inputs
 - **Style:** transparent on the canvas, 1px control-border outline, 8 corners, 56 min height, 16 side padding. Label sits above in secondary.
@@ -270,7 +271,7 @@ Title in strong, detail in muted, trailing state 72 wide and right aligned. "Tur
 Surface fill, 12 corners, 20 padding, 8 gap. Meta line in muted ("WhatsApp · Mom"), message in quote type. Selectable.
 
 ### Live indicator
-8px green dot plus 15px green state text in the top bar. Static, no pulse.
+8px green dot plus 15px green state text in the top bar. Static, no pulse. The same pair marks a family voice recording in Settings, with a one-second timer.
 
 ## Do's and Don'ts
 
