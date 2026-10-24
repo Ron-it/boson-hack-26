@@ -1,8 +1,5 @@
 # Tandem runtime
 
-The first slice is Android Settings only. The final audience and product story
-remain open.
-
 ```text
 Expo screen → Kotlin microphone/speaker foreground service
                          ↕ authenticated WSS
