@@ -1,3 +1,5 @@
+import { clockRequest, timerRequestSchema, alarmRequestSchema, type ClockProposal, type ClockCommand } from './native-requests.ts';
+import { executeNativeCommand, type NativeTransport } from './native-commands.ts';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { actionCandidates, assertSettingsScreen, executeAction, readStableScreen, progressFingerprint, targetIsCurrent, type ActionCandidate } from '../mobile/actions.ts';
@@ -8,13 +10,17 @@ import { capabilityFor, type Outgoing } from '../mobile/capabilities.ts';
 import { workflowRequestSchema, type ContentSelection } from '../mobile/workflows.ts';
 
 /** What the user is asked to approve. Approval applies once, to exactly this payload and request revision. */
-export type Proposal = { id: string; operation: 'send_message'; app: string; recipient: string; message: string };
+type MessageProposal = { id: string; operation: 'send_message'; app: string; recipient: string; message: string };
+export type Proposal = MessageProposal | ClockProposal;
 export type TaskStatus = { type: 'task'; state: 'paused' | 'working' | 'confirming' | 'question' | 'declined' | 'completed' | 'blocked' | 'unknown'; goal: string; detail: string; revision: number; proposal?: Proposal };
 
 const singleLine = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\r\n]*$/, 'Use a single line');
 export const phoneRequestSchema = z.object({
   ...workflowRequestSchema.shape,
   instruction: z.string().min(1).max(2000),
+  timer: timerRequestSchema.optional(), alarm: alarmRequestSchema.optional(),
+  ambiguousVolume: z.boolean().optional(),
+  mediaVolume: z.number().min(0).max(100).optional(),
   brightness: z.number().min(10).max(100).optional(), nightLight: z.boolean().optional(),
   app: singleLine(80).optional(), recipient: singleLine(120).optional(), message: singleLine(1000).optional(),
 });
@@ -22,7 +28,8 @@ export type PhoneRequest = z.infer<typeof phoneRequestSchema>;
 
 /** The exact control the user approved. Approval never transfers to another control or app. */
 type Target = { packageName: string; resourceId: string; label: string };
-type PendingProposal = Proposal & { revision: number; target: Target };
+type PendingMessage = MessageProposal & { revision: number; target: Target };
+type PendingProposal = PendingMessage | (ClockProposal & { revision: number });
 type Counts = Record<Outgoing['status'], number>;
 /** A dispatched send, with the outgoing copies of its text that were already on screen just before the tap. */
 type Sent = { recipient: string; message: string; packageName: string; before: Counts };
@@ -59,10 +66,10 @@ function sendResult(observation: PhoneObservation, sent: Sent): Outgoing['status
   if (counts.failed > sent.before.failed) return 'failed';
   return counts.sending > sent.before.sending ? 'sending' : 'none';
 }
-export type NativeCommand = (...command: ['set_brightness', { percent: number }] | ['open_display' | 'read_brightness', Record<string, never>]) => Promise<unknown>;
+export type NativeCommand = NativeTransport;
 
 /** Shared by every caller of one phone, so a replacement voice session cannot replay an unacknowledged mutation. */
-type PhoneExecution = { tail: Promise<void>; brightnessUnknown: boolean; sendUnknown: Sent | undefined };
+type PhoneExecution = { tail: Promise<void>; brightnessUnknown: boolean; sendUnknown: Sent | undefined; clockUnknown: ClockCommand | undefined; mediaUnknown: number | undefined };
 const phoneExecutions = new WeakMap<PhoneControl, PhoneExecution>();
 
 /** The revision is invalidated synchronously, before awaiting a cancelled model request. */
@@ -86,7 +93,7 @@ export class PhoneTask {
     selector: Pick<ReturnType<typeof createSelector>, 'decide'> = createSelector('openai', environment),
     native?: NativeCommand) {
     this.phone = phone;
-    this.execution = phoneExecutions.get(phone) ?? { tail: Promise.resolve(), brightnessUnknown: false, sendUnknown: undefined };
+    this.execution = phoneExecutions.get(phone) ?? { tail: Promise.resolve(), brightnessUnknown: false, sendUnknown: undefined, clockUnknown: undefined, mediaUnknown: undefined };
     phoneExecutions.set(phone, this.execution);
     this.native = native;
     this.emit = emit;
@@ -104,7 +111,7 @@ export class PhoneTask {
     this.revision++;
     this.abort?.abort(new Error(detail));
     this.abort = undefined;
-    if (this.active || withdrawn) this.emit({ type: 'task', state: 'paused', goal: this.goal, detail: withdrawn ? `${detail}. The confirmation was withdrawn; nothing was sent.` : detail, revision: this.revision });
+    if (this.active || withdrawn) this.emit({ type: 'task', state: 'paused', goal: this.goal, detail: withdrawn ? `${detail}. The confirmation was withdrawn; nothing was submitted.` : detail, revision: this.revision });
     this.active = false;
   }
 
@@ -128,10 +135,10 @@ export class PhoneTask {
     if (!proposal || proposal.id !== proposalId || proposal.revision !== this.revision || this.active) return { status: 'expired', settled: Promise.resolve() };
     this.proposal = undefined;
     if (!approve) {
-      this.finish('declined', `Not sent. The draft to ${proposal.recipient} is still in ${proposal.app}.`, this.revision);
+      this.finish('declined', proposal.operation === 'send_message' ? `Not sent. The draft to ${proposal.recipient} is still in ${proposal.app}.` : 'Not created. Clock was not changed.', this.revision);
       return { status: 'declined', settled: Promise.resolve() };
     }
-    return { status: 'accepted', settled: this.schedule('Checking the draft before sending', (revision, signal) => this.send(proposal, revision, signal)) };
+    return { status: 'accepted', settled: this.schedule('Checking the approved action', (revision, signal) => proposal.operation === 'send_message' ? this.send(proposal, revision, signal) : this.createClock(proposal, revision, signal)) };
   }
 
   submit(request: PhoneRequest) {
@@ -140,7 +147,7 @@ export class PhoneTask {
     const parsed = phoneRequestSchema.safeParse(request);
     if (!parsed.success) {
       this.request = undefined;
-      this.finish('blocked', 'Please give a brightness from 10 to 100 percent, Night Light on or off, or a single-line recipient and message.', this.revision);
+      this.finish('blocked', 'Please give supported settings values, a timer duration, a next local alarm time, or a single-line recipient and message. Date-specific and repeating alarms need Clock.', this.revision);
       return Promise.resolve();
     }
     this.request = parsed.data;
@@ -155,6 +162,13 @@ export class PhoneTask {
 
   setBrightness(percent: number) {
     return this.submit({ ...this.request, instruction: this.request?.nightLight === undefined ? `Set brightness to ${percent}%` : `Set brightness to ${percent}%, retaining Night Light ${this.request.nightLight ? 'on' : 'off'}`, brightness: percent });
+  }
+
+  /** Explicit read-only commands may overlap voice and selector inference; they never enter the mutation queue. */
+  async readNative(value: 'brightness' | 'media_volume') {
+    if (!this.native) return { status: 'blocked' as const, reason: 'Native readback is unavailable.' };
+    try { return await executeNativeCommand({ name: value === 'brightness' ? 'read_brightness' : 'read_media_volume', args: {} }, this.native); }
+    catch { return { status: 'unknown' as const, reason: 'Native readback could not be established.' }; }
   }
 
   resume() {
@@ -192,6 +206,54 @@ export class PhoneTask {
     // Every screen-affecting operation is inside the same serialized tail.
     const first = await this.phone.state();
     check();
+    if (request.ambiguousVolume) { this.finish('question', 'Do you mean media volume? What percentage should I use?', revision); return; }
+    if ((request.timer || request.alarm) && (settings || request.mediaVolume !== undefined || request.app || request.message || request.recipient)) {
+      this.finish('question', 'Should I handle the Clock request or the other task first?', revision); return;
+    }
+    if (request.mediaVolume !== undefined && (request.app || request.message || request.recipient)) {
+      this.finish('question', 'Should I change media volume or handle the app task first?', revision); return;
+    }
+    const clock = clockRequest(request);
+    if (clock) {
+      if ('question' in clock) { this.finish('question', clock.question, revision); return; }
+      if (this.execution.clockUnknown) { this.finish('unknown', 'An earlier Clock creation may already exist. Check Clock and handle it there; I will not create another automatically.', revision); return; }
+      if (!this.native) { this.finish('blocked', 'Clock shortcuts are unavailable. Please use the Clock app.', revision); return; }
+      const handler = await executeNativeCommand({ name: 'resolve_handler', args: { target: clock.command.name === 'create_timer' ? 'timer' : 'alarm' } }, this.native);
+      check();
+      if (handler.status !== 'observed' || !('available' in handler) || !handler.available) {
+        this.finish('blocked', handler.status === 'blocked' ? `${handler.reason}. Please open Clock and create it there.` : 'No available Clock handler was established. Please open Clock and create it there.', revision); return;
+      }
+      const proposal: ClockProposal & { revision: number } = { id: randomUUID(), operation: clock.command.name, app: 'Clock', handlerPackage: handler.handlerPackage, ...clock, revision };
+      this.proposal = proposal;
+      this.finish('confirming', clock.detail, revision, structuredClone({ id: proposal.id, operation: proposal.operation, app: proposal.app, handlerPackage: proposal.handlerPackage, command: proposal.command, detail: proposal.detail }));
+      return;
+    }
+    if (request.mediaVolume !== undefined) {
+      if (!this.native) { this.finish('blocked', 'Native media volume is unavailable. Please use the media volume controls.', revision); return; }
+      let established = false;
+      if (this.execution.mediaUnknown !== undefined) {
+        let observed;
+        try { observed = await executeNativeCommand({ name: 'read_media_volume', args: {} }, this.native); }
+        catch { check(); this.finish('unknown', 'Could not inspect the earlier media volume change. No write retried.', revision); return; }
+        check();
+        if (observed.status !== 'observed' || !('observedIndex' in observed)) { this.finish('unknown', 'Could not inspect the earlier media volume change. No write retried.', revision); return; }
+        this.execution.mediaUnknown = undefined;
+        established = observed.observedIndex === Math.floor(observed.minIndex + request.mediaVolume / 100 * (observed.maxIndex - observed.minIndex) + 0.5);
+        if (established && !settings) { this.finish('completed', `Observed media volume ${observed.observedIndex} on Android range ${observed.minIndex} to ${observed.maxIndex}.`, revision); return; }
+      }
+      if (!established) {
+        this.execution.mediaUnknown = request.mediaVolume;
+        let result;
+        try { result = await executeNativeCommand({ name: 'set_media_volume', args: { percent: request.mediaVolume } }, this.native); }
+        catch { check(); this.finish('unknown', 'Media volume outcome is unknown. Say continue to inspect before retrying.', revision); return; }
+        if (result.status === 'completed' || result.status === 'blocked') this.execution.mediaUnknown = undefined;
+        check();
+        if (result.status !== 'completed' || !('observedIndex' in result)) {
+          this.finish(result.status === 'unknown' ? 'unknown' : 'blocked', result.status === 'blocked' ? `${result.reason} Please use the media volume controls or fix the permission, then ask again.` : 'Media volume outcome is unknown. Say continue to inspect before retrying.', revision); return;
+        }
+        if (!settings) { this.finish('completed', `Observed media volume ${result.observedIndex} on Android range ${result.minIndex} to ${result.maxIndex}.`, revision); return; }
+      }
+    }
     for (const value of request.values ?? []) {
       const source = value.source;
       if (source.kind === 'screen' && (source.text !== value.text || first.app.packageName !== source.packageName
@@ -202,6 +264,7 @@ export class PhoneTask {
     const fields = request.values?.map(value => value.field) ?? [];
     if (new Set(fields).size !== fields.length) {
       this.finish('question', 'There is more than one value for the same field. Which text should I use?', revision); return;
+
     }
     if (!settings) {
       if (request.message && !request.recipient) { this.finish('question', 'Who should I send it to?', revision); return; }
@@ -391,7 +454,7 @@ export class PhoneTask {
       this.finish('question', names.length ? `Which ${request.recipient} do you mean: ${names.slice(0, 3).join(' or ')}?` : `I can't see ${request.recipient} as the recipient here. Who exactly should get this?`, revision);
       return true;
     }
-    const proposal: PendingProposal = { id: randomUUID(), operation: 'send_message', app, recipient, message, revision, target: { packageName: observation.app.packageName, ...control } };
+    const proposal: PendingMessage = { id: randomUUID(), operation: 'send_message', app, recipient, message, revision, target: { packageName: observation.app.packageName, ...control } };
     this.proposal = proposal;
     const warning = this.execution.sendUnknown ? ' An earlier send may already have gone through.' : '';
     this.finish('confirming', `Send ${JSON.stringify(message)} to ${recipient} in ${app}?${warning}`, revision, { id: proposal.id, operation: proposal.operation, app, recipient, message });
@@ -403,7 +466,7 @@ export class PhoneTask {
    * observed results. After every await it reports only if this request still owns the phone; once the tap is
    * dispatched, the unknown outcome stays recorded until a check establishes it.
    */
-  private async send(proposal: PendingProposal, revision: number, signal: AbortSignal) {
+  private async send(proposal: PendingMessage, revision: number, signal: AbortSignal) {
     const owns = () => revision === this.revision && !signal.aborted;
     const current = await readStableScreen(this.phone, signal);
     if (!owns()) return;
@@ -439,6 +502,36 @@ export class PhoneTask {
       }
     }
     this.finish('unknown', `I tapped send, but the message doesn't show as sent to ${proposal.recipient} yet. I won't send it again; check the conversation.`, revision);
+  }
+
+  private async createClock(proposal: ClockProposal, revision: number, signal: AbortSignal) {
+    const owns = () => revision === this.revision && !signal.aborted;
+    if (!this.native || !owns()) return;
+    // Refresh both foreground evidence and handler availability after the user's answer.
+    await this.phone.state();
+    if (!owns()) return;
+    const handler = await executeNativeCommand({ name: 'resolve_handler', args: { target: proposal.operation === 'create_timer' ? 'timer' : 'alarm' } }, this.native);
+    if (!owns()) return;
+    if (handler.status !== 'observed' || !('available' in handler) || !handler.available) {
+      this.finish('blocked', handler.status === 'blocked' ? `${handler.reason}. Nothing was created; please use Clock manually.` : 'Clock is unavailable. Nothing was created; please use the Clock app.', revision); return;
+    }
+    if (handler.handlerPackage !== proposal.handlerPackage) { this.finish('blocked', 'The Clock handler changed after approval. Say continue to review a fresh proposal.', revision); return; }
+    if (this.execution.clockUnknown) { this.finish('unknown', 'Check the earlier Clock creation before creating another.', revision); return; }
+    this.execution.clockUnknown = proposal.command;
+    let result;
+    try { result = await executeNativeCommand(proposal.command, this.native); }
+    catch { if (owns()) this.finish('unknown', 'Clock outcome is unknown. Inspect Clock before creating another.', revision); return; }
+    // Clear a definite denial even if speech superseded the reporting revision.
+    if (result.status === 'blocked') this.execution.clockUnknown = undefined;
+    if (!owns()) return;
+    if (result.status === 'blocked') { this.finish('blocked', `${result.reason} Please use Clock manually or fix its permission, then ask again.`, revision); return; }
+    if (result.status !== 'handoff') { this.finish('unknown', 'Clock outcome is unknown. Inspect Clock before creating another.', revision); return; }
+    try {
+      const observation = await this.phone.state();
+      if (!owns()) return;
+      const opened = observation.app.packageName === result.handlerPackage;
+      this.finish('unknown', opened ? 'Clock opened, but the created timer or alarm is not independently verified. Please check Clock; I will not create it again.' : 'Clock accepted the request, but its resulting screen and event are not verified. Please check Clock; I will not create it again.', revision);
+    } catch { if (owns()) this.finish('unknown', 'Clock accepted the request, but the result is not verified. Please check Clock.', revision); }
   }
 
   private finish(state: TaskStatus['state'], detail: string, revision: number, proposal?: Proposal) {
