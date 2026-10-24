@@ -16,6 +16,29 @@ resume, and answer a pending question or confirmation. Emit short progress,
 questions, proposed actions, handoffs, and evidenced outcomes for voice to report.
 The user should not have to choose an execution path.
 
+## Selected cohesive mechanism
+
+The implementation uses one flat ordered operation plan owned by PhoneTask.
+Each supported operation supplies typed arguments, declared effects, execution
+and a result check through `src/server/operation-plan.ts`. Media/native,
+Settings, Clock intents and supported app UI share the same serialized tail,
+request revision, correction, pause and current-step approval. Results remain
+per requirement; partial and uncertain work never completes the whole request.
+Unknown Clock handoffs are retained without replay while other work continues.
+This extends the accepted coordinator rather than introducing a plugin or DAG
+framework. See [the contract and voice event seam](phone-workflows.md).
+
+Accepted asynchronous work does not request an idle voice response. Grounded
+terminal/question events own a separate response lifecycle with explicit input,
+response metadata and a bounded missing-completion deadline. Operator work,
+provider generation/audio delivery, and actual native playback are separate
+states. Material issues/results are shown and announced briefly once when the
+voice transport is available. Explicit user questions remain interruptible.
+
+Implementation evidence is bounded: the provider protocol probe and controlled
+public tests do not establish physical speech/device acceptance. Portal image
+opening is still an unresolved emulator acceptance gate.
+
 ## Execution paths
 
 Prefer a supported native command when it can accomplish the requested result.

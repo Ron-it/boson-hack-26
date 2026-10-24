@@ -13,7 +13,7 @@ export type Portal = (method: string, params: Record<string, unknown>) => unknow
 
 const outputSchema = z.object({ type: z.literal('conversation.item.create'), item: z.object({ call_id: z.string(), output: z.string() }) });
 
-export async function harness(portal: Portal, options: { describeScreen?: ScreenDescriber | null; selector?: Pick<ReturnType<typeof createSelector>, 'decide'>; holdResponses?: boolean; native?: (name: string, args: Record<string, unknown>) => unknown | Promise<unknown> } = {}) {
+export async function harness(portal: Portal, options: { describeScreen?: ScreenDescriber | null; selector?: Pick<ReturnType<typeof createSelector>, 'decide'>; holdResponses?: boolean; responseDeadlineMs?: number; native?: (name: string, args: Record<string, unknown>) => unknown | Promise<unknown> } = {}) {
   const server = new WebSocketServer({ port: 0 });
   await once(server, 'listening');
   const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -56,6 +56,7 @@ export async function harness(portal: Portal, options: { describeScreen?: Screen
   const outputs: { call_id: string; output: unknown }[] = [];
   /** Instructions of each response the server asked Boson to speak, such as a task announcement. */
   const announcements: string[] = [];
+  const responseRequests: { instructions: string; input?: unknown }[] = [];
   let spoken = 0;
   /** While held, responses the server starts stay in progress, as if Boson were still speaking them. */
   let held: string[] | undefined = holdResponses ? [] : undefined;
@@ -64,12 +65,12 @@ export async function harness(portal: Portal, options: { describeScreen?: Screen
     const event: unknown = JSON.parse(data.toString());
     const parsed = outputSchema.safeParse(event);
     if (parsed.success) outputs.push({ call_id: parsed.data.item.call_id, output: JSON.parse(parsed.data.item.output) });
-    const response = z.object({ type: z.literal('response.create'), response: z.object({ instructions: z.string() }).optional() }).safeParse(event);
+    const response = z.object({ type: z.literal('response.create'), response: z.object({ instructions: z.string(), metadata: z.record(z.string(), z.string()).optional(), input: z.unknown().optional() }).optional() }).safeParse(event);
     if (response.success) {
       // Boson speaks the response and finishes it, so the server may announce again.
-      if (response.data.response) announcements.push(response.data.response.instructions);
+      if (response.data.response) { announcements.push(response.data.response.instructions); responseRequests.push(response.data.response); }
       const id = `spoken_${++spoken}`;
-      boson.send(JSON.stringify({ type: 'response.created', response: { id } }));
+      boson.send(JSON.stringify({ type: 'response.created', response: { id, metadata: response.data.response?.metadata } }));
       if (held) held.push(id); else finish(id);
     }
   });
@@ -77,7 +78,7 @@ export async function harness(portal: Portal, options: { describeScreen?: Screen
   let calls = 0;
   async function call(name: string, args: object) {
     const callId = `call_${++calls}`;
-    boson.send(JSON.stringify({ type: 'response.created', response: { id: callId } }));
+    boson.send(JSON.stringify({ type: 'response.created', response: { id: callId, metadata: null } }));
     boson.send(JSON.stringify({ type: 'response.done', response: { id: callId, status: 'completed', output: [{ type: 'function_call', name, call_id: callId, arguments: JSON.stringify(args) }] } }));
     for (let waited = 0; waited < 3000; waited += 10) {
       const result = outputs.find(item => item.call_id === callId);
@@ -106,7 +107,8 @@ export async function harness(portal: Portal, options: { describeScreen?: Screen
   function releaseResponses() { const ids = held ?? []; held = undefined; ids.forEach(finish); }
 
   return {
-    call, speak, until, releaseResponses, portalSeen, appEvents, announcements,
+    call, speak, until, releaseResponses, portalSeen, appEvents, announcements, responseRequests,
+    provider: (event: object) => boson.send(JSON.stringify(event)),
     async close() {
       session.close();
       for (const ws of [portalClient, appClient, boson, ...accepted]) ws.terminate();
