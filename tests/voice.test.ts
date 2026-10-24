@@ -215,3 +215,10 @@ test('blocked tasks wait for a real user correction; pause persists across corre
     assert.ok(journey.voiceEvents.some(event => event.type === 'session.update' && event.session?.tool_choice === 'auto'));
   } finally { journey.close(); }
 });
+
+test('blocked Settings announcement gives the recovery instruction without a generic greeting', () => {
+  const event = completionResponse({ type: 'task', state: 'blocked', goal: 'Turn Night Light on', detail: "I couldn't open Settings. Open Display settings, then say continue.", revision: 5 });
+  assert.match(event.response.instructions, /Say exactly this task feedback/);
+  assert.match(event.response.instructions, /Open Display settings, then say continue/);
+  assert.match(event.response.instructions, /Do not greet/);
+});

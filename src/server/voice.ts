@@ -77,6 +77,7 @@ export function completionResponse(status: TaskStatus) {
   const ask = status.proposal
     ? status.proposal.operation !== 'send_message' ? ` Ask the user: ${status.proposal.detail} Use proposal id ${status.proposal.id} in confirm_phone_action only after they answer.` : ` Ask the user to confirm: send ${JSON.stringify(status.proposal.message)} to ${status.proposal.recipient}. Use proposal id ${status.proposal.id} in confirm_phone_action after they answer.`
     : status.state === 'question' ? ' Ask the user this question in one short sentence.'
+    : status.state === 'blocked' || status.state === 'unknown' ? ` Say exactly this task feedback: ${JSON.stringify(status.detail)}. Do not greet, offer help, claim success, or call tools.`
     : ' Report the observed outcome in one short sentence, at most 20 words. Do not narrate steps, repeat the goal, or call tools.';
   return { type: 'response.create', response: {
     // Boson replaces the instructions for this response, so retain the session constraints.
