@@ -50,6 +50,14 @@ const instructionSchema = z.object({
   return parsed.data;
 });
 
+/** A clear spoken yes or no, or undefined when the words alone do not settle it. */
+export function spokenAnswer(transcript: string): boolean | undefined {
+  const words = transcript.toLowerCase().replace(/[^a-z' ]+/g, ' ').trim();
+  const yes = /^(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|send it|confirm|please do|absolutely|correct|that's right|sounds good)\b/.test(words);
+  const no = /^(no|nope|nah|don't|do not|cancel|stop|never mind|wait)\b/.test(words);
+  return yes === no ? undefined : yes;
+}
+
 /**
  * The voice model's arguments, or failing that its goal alone: a malformed extra must not throw away a valid request.
  * Field paths, never values, are logged so rejections can be diagnosed.
@@ -76,10 +84,10 @@ Ask a question only when the goal itself is missing something essential. If look
 When the user wants to be shown how, call set_help_mode with guide, then give one or two short steps at a time, naming only controls that were observed, and let the user act. In guide mode you cannot act on the phone. Call set_help_mode with do only when the user asks you to do it for them.
 Use set_brightness for brightness alone. Use update_phone_task for combined requests and Night Light, supplying concrete brightness and/or nightLight targets with the complete instruction. Retain requirements not cancelled by a correction.
 To send a message, call update_phone_task with app, recipient and message exactly as the user said them. Never invent a recipient, contact, app or wording; ask instead. The phone always asks before sending, even when the user already said send.
-When a task update asks for confirmation, read back the recipient and message and ask whether to send. Call confirm_phone_action with that proposal id only after the user answers: approve true for a clear yes, false for no. If they change the recipient or wording, call update_phone_task with the corrected request instead.
+When a task update asks for confirmation, read back the recipient and message and ask whether to send. Call confirm_phone_action with that proposal id only after the user answers: answer "yes" when they agree (yes, yeah, sure, go ahead, send it), "no" when they refuse. If they change the recipient or wording, call update_phone_task with the corrected request instead.
 For media volume use mediaVolume with an explicit 0 to 100 percentage. If the user says only volume, ask which stream and percentage; ambiguousVolume true lets the operator ask too. Only media volume is supported, never substitute it for ring/call/alarm volume.
 For a timer convert an unambiguous duration to timer.seconds (integer seconds), and preserve an optional label. Ask about ambiguous units rather than guessing.
-For an alarm supply alarm.hour, minute, period (am/pm/24h) and occurrence next only when the user established the next occurrence in device-local time. Never infer AM/PM, a date, recurrence or timezone. Date-specific/repeating requests require manual Clock help. Leave unresolved fields absent so the operator asks. Never pretend an intent creates a verified timer/alarm. Ask the concrete Clock proposal verbatim and wait for a new user answer before confirm_phone_action. On correction replace the complete request; do not approve the old proposal.
+For an alarm supply alarm.hour, minute and period (am/pm/24h). Ask only when AM or PM is unclear. Timers and alarms start right away with no confirmation.
 Submit supported mixed goals together in one complete update_phone_task request. The operator retains each requirement, checks each result and asks only for the current concrete approval. Partial or unknown results never mean the whole goal is done.
 Use read_phone_value for native brightness/media readback; it is read-only and can overlap work. A read is not permission to retry an unknown mutation.
 If direct brightness control is blocked by permission, use update_phone_task to adjust it through the Settings UI instead.
@@ -99,7 +107,7 @@ const tools = [
     alarm: { type: 'object', properties: { hour: { type: 'integer', minimum: 0, maximum: 23 }, minute: { type: 'integer', minimum: 0, maximum: 59 }, period: { type: 'string', enum: ['am', 'pm', '24h'] }, occurrence: { type: 'string', enum: ['next'], description: 'Only when user intent establishes next occurrence in device-local time; no date/recurrence support.' }, label: { type: 'string', maxLength: 120 } }, additionalProperties: false },
     app: { type: 'string', description: 'App to use, as the user named it.' }, recipient: { type: 'string', description: 'Who receives the message, as the user said it.' }, message: { type: 'string', description: 'The exact message text.' },
   }, required: ['instruction'], additionalProperties: false } },
-  { type: 'function', name: 'confirm_phone_action', description: 'Relay the user\'s spoken answer to a pending confirmation, such as sending a message.', parameters: { type: 'object', properties: { proposalId: { type: 'string' }, approve: { type: 'boolean' } }, required: ['proposalId', 'approve'], additionalProperties: false } },
+  { type: 'function', name: 'confirm_phone_action', description: 'Relay the user\'s spoken answer to a pending confirmation, such as sending a message.', parameters: { type: 'object', properties: { proposalId: { type: 'string' }, answer: { type: 'string', enum: ['yes', 'no'], description: 'yes when the user agreed, no when they refused.' } }, required: ['proposalId', 'answer'], additionalProperties: false } },
   { type: 'function', name: 'set_brightness', description: 'Schedule system brightness to a user-requested percentage. Requires the phone brightness permission.', parameters: { type: 'object', properties: { percent: { type: 'number', minimum: 10, maximum: 100 } }, required: ['percent'], additionalProperties: false } },
   ...['pause_phone_task', 'continue_phone_task'].map(name => ({ type: 'function', name, description: name === 'pause_phone_task' ? 'Pause persistently for manual control until explicit continue.' : 'Continue the retained request from fresh phone state only when explicitly requested.', parameters: { type: 'object', properties: {}, additionalProperties: false } })),
   { type: 'function', name: 'look_at_screen', description: 'Read the app currently on screen without changing it. Returns visible controls, or says the screen is unavailable.', parameters: { type: 'object', properties: { question: { type: 'string', description: 'What the user wants help with, in their words.' } }, required: ['question'], additionalProperties: false } },
@@ -176,6 +184,10 @@ export class VoiceSession {
   private firstInput = true;
   private firstOutput = true;
   private describeScreen: ScreenDescriber | null;
+  /** Opt-in content logging (transcripts, operator details) for diagnosing live sessions. Off by default. */
+  private debug: boolean;
+  /** The latest user transcript and which utterance it belongs to. */
+  private heard: { text: string; speeches: number } | undefined;
   /** Guide mode is the user's choice to act themselves; only an explicit request switches back. */
   private mode: 'do' | 'guide' = 'do';
   private speeches = 0;
@@ -188,6 +200,7 @@ export class VoiceSession {
     this.responseDeadlineMs = adapters.responseDeadlineMs ?? 30_000;
     this.device = device;
     this.describeScreen = adapters.describeScreen === undefined ? createScreenDescriber(environment) : adapters.describeScreen;
+    this.debug = environment.DEBUG_LOGS === '1';
     const key = environment.BOSON_API_KEY;
     if (!key) throw new Error('Boson key is not configured on the server');
     this.task = new PhoneTask(device.phone, status => this.onTaskStatus(status), environment, adapters.selector, (name, args) => this.command(name, args));
@@ -301,9 +314,12 @@ export class VoiceSession {
       case 'response.output_audio_transcript.delta':
       case 'response.output_audio_transcript.done':
         if (!this.canRelay(event.response_id)) return;
+        if (this.debug && event.type === 'response.output_audio_transcript.done') console.log('Debug assistant said:', JSON.stringify(event.transcript ?? ''));
         this.sendApp(event);
         return;
       case 'conversation.item.input_audio_transcription.completed':
+        if (this.debug) console.log('Debug user said:', JSON.stringify(event.transcript ?? ''));
+        if (event.transcript) this.heard = { text: event.transcript, speeches: this.speeches };
         this.sendApp(event);
         return;
       case 'response.function_call_arguments.done':
@@ -358,6 +374,7 @@ export class VoiceSession {
       this.handledCalls.add(callId);
       const tool = tools.some(tool => tool.name === call.name) ? call.name : 'unsupported';
       console.log('Voice tool:', tool);
+      if (this.debug) console.log('Debug tool arguments:', tool, call.arguments.slice(0, 1000));
       this.phase('tool_dispatch', this.turnStarted);
       let output: object;
       let rejection: ToolResultCategory = 'tool_error';
@@ -411,7 +428,13 @@ export class VoiceSession {
             : { status: 'accepted', note: 'Working on the complete request. Wait for the operator outcome; do not resubmit.' };
         } else if (call.name === 'confirm_phone_action') {
           rejection = 'confirmation_required';
-          const { proposalId, approve } = z.object({ proposalId: z.string(), approve: z.boolean() }).parse(raw);
+          const args = z.object({ proposalId: z.string(), answer: z.enum(['yes', 'no']).optional(), approve: z.boolean().optional() }).parse(raw);
+          const { proposalId } = args;
+          // The model has relayed "no" right after the user said "Yes." Their own words, when clear, decide.
+          const words = this.heard?.speeches === this.speeches ? spokenAnswer(this.heard.text) : undefined;
+          const approve = words ?? (args.answer ? args.answer === 'yes' : args.approve);
+          if (approve === undefined) throw new Error('Answer yes or no.');
+          console.log('Voice confirmation answer:', approve ? 'approve' : 'decline', words === undefined ? '(model)' : '(spoken)');
           // The voice model relays an answer; it cannot supply one. Require the user to have spoken after being asked.
           if (this.asked?.proposalId !== proposalId || this.speeches <= this.asked.speeches) throw new Error('Ask the user and wait for their answer before confirming.');
           const answer = this.task.answer(proposalId, approve);
@@ -530,6 +553,7 @@ export class VoiceSession {
 
   private onTaskStatus(status: TaskStatus) {
     console.log('Phone task:', status.state, 'revision:', status.revision);
+    if (this.debug) console.log('Debug task detail:', JSON.stringify({ goal: status.goal, detail: status.detail, proposal: status.proposal }));
     const changed = this.taskStatus?.state !== status.state || this.taskStatus.revision !== status.revision;
     this.taskStatus = status;
     if (changed) this.diagnostic('operator_state');

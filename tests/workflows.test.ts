@@ -303,62 +303,26 @@ test('a correction while paused between operations retains native evidence and r
   assert.equal(statuses.at(-1)?.state, 'completed');
 });
 
-test('Clock approval belongs to its current operation and an unknown intent is not replayed while the app step continues', async () => {
+test('a timer and an app goal complete in one run, and continuing never recreates the timer', async () => {
   let query = '';
   const creates: number[] = [];
   const statuses: TaskStatus[] = [];
   const phone = control(async () => screen([search(query), ...(query ? [result()] : [])]), { typeText: async text => { query = text; } });
-  const task = new PhoneTask(phone, status => statuses.push(status), {}, { decide: async ({ candidates }) => ({ actionId: query ? 'done' : candidates.find(candidate => candidate.action.type === 'type')?.id ?? 'blocked', confidence: null, returnedModel: null }) }, async (name, args) => {
+  const task = new PhoneTask(phone, status => statuses.push(status), {}, { decide: async ({ candidates }) => ({ actionId: query === 'Boson-Test' ? 'done' : candidates.find(candidate => candidate.action.type === 'type')?.id ?? 'blocked', confidence: null, returnedModel: null }) }, async (name, args) => {
     if (name === 'resolve_handler') return { status: 'observed', available: true, handlerPackage: 'test.clock' };
     if (name === 'create_timer') { creates.push(Number(args.seconds)); return { status: 'handoff', handlerPackage: 'test.clock', note: 'Event not independently verified' }; }
     throw new Error('Unexpected command');
   });
-  await task.submit({ ...request, timer: { seconds: 300, label: 'First' } });
-  const old = statuses.at(-1)?.proposal;
-  assert.ok(old && old.operation === 'create_timer');
-  await task.submit({ ...request, instruction: 'Actually ten minutes, then find Boson-Test', timer: { seconds: 600, label: 'Corrected' } });
-  const current = statuses.at(-1)?.proposal;
-  assert.ok(current && current.operation === 'create_timer');
-  assert.notEqual(current.id, old.id);
-  assert.equal(task.answer(old.id, true).status, 'expired');
-  const accepted = task.answer(current.id, true);
-  assert.equal(task.answer(current.id, true).status, 'expired');
-  await accepted.settled;
+  await task.submit({ ...request, timer: { seconds: 600, label: 'Tea' } });
   assert.deepEqual(creates, [600]);
-  assert.equal(statuses.at(-1)?.state, 'unknown');
-  assert.equal(query, '');
-  await task.resume();
   assert.equal(query, 'Boson-Test');
-  assert.deepEqual(creates, [600]);
-  assert.equal(statuses.at(-1)?.state, 'unknown');
-  assert.equal(statuses.at(-1)?.progress?.find(step => step.id === 'timer')?.state, 'unknown');
+  assert.equal(statuses.at(-1)?.state, 'completed');
   assert.equal(statuses.at(-1)?.progress?.find(step => step.id === 'timer')?.evidence?.kind, 'intent_handoff');
-  assert.equal(statuses.at(-1)?.progress?.find(step => step.id === 'app')?.state, 'completed');
-  assert.equal(statuses.some(status => status.state === 'completed'), false);
-});
-
-test('continue rechecks completed UI evidence while retaining an earlier unknown Clock outcome', async () => {
-  let query = '';
-  let creates = 0;
-  const statuses: TaskStatus[] = [];
-  const phone = control(async () => screen([search(query), ...(query ? [result()] : [])]), { typeText: async text => { query = text; } });
-  const task = new PhoneTask(phone, status => statuses.push(status), {}, { decide: async ({ candidates }) => ({ actionId: query === 'Boson-Test' ? 'done' : candidates.find(candidate => candidate.action.type === 'type')?.id ?? 'blocked', confidence: null, returnedModel: null }) }, async name => {
-    if (name === 'resolve_handler') return { status: 'observed', available: true, handlerPackage: 'clock' };
-    creates++;
-    return { status: 'handoff', handlerPackage: 'clock', note: 'Not verified' };
-  });
-  await task.submit({ ...request, timer: { seconds: 60, label: 'Test' } });
-  const proposal = statuses.at(-1)?.proposal;
-  assert.ok(proposal);
-  await task.answer(proposal.id, true).settled;
-  await task.resume();
-  assert.equal(query, 'Boson-Test');
   task.pause('Manual control');
   query = 'Something else';
   await task.resume();
-  assert.equal(query, 'Boson-Test');
-  assert.equal(creates, 1);
-  assert.equal(statuses.at(-1)?.state, 'unknown');
+  assert.equal(query, 'Boson-Test', 'the UI result is rechecked and redone');
+  assert.deepEqual(creates, [600], 'the timer is not created again');
 });
 
 test('a fresh supported UI outcome completes without another model decision', async () => {

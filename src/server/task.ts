@@ -162,7 +162,6 @@ export class PhoneTask {
     }
     return { status: 'accepted', settled: this.schedule('Checking the approved action', async (revision, signal) => {
       if (proposal.operation === 'send_message') await this.send(proposal, revision, signal);
-      else await this.createClock(proposal, revision, signal);
       if (revision === this.revision && !signal.aborted && this.currentStep?.state === 'completed') await this.run(this.goal, revision, signal);
     }) };
   }
@@ -271,7 +270,8 @@ export class PhoneTask {
       })),
       planOperation(request, {
         id: 'app', label: request.message || request.recipient ? 'message' : 'app result', effect: 'ui',
-        arguments: value => value.app || value.message || value.recipient || value.outcome || value.values?.length
+        // Naming Clock for a timer or alarm is not a separate UI goal; the intent already covers it.
+        arguments: value => (value.app && !((value.timer || value.alarm) && /clock|timer|alarm/i.test(value.app))) || value.message || value.recipient || value.outcome || value.values?.length
           || (value.brightness === undefined && value.nightLight === undefined && value.mediaVolume === undefined && !value.ambiguousVolume && !value.timer && !value.alarm)
           ? { app: value.app, message: value.message, recipient: value.recipient, values: value.values, outcome: value.outcome } : undefined,
         execute: executeUi,
@@ -344,9 +344,8 @@ export class PhoneTask {
       if (handler.status !== 'observed' || !('available' in handler) || !handler.available) {
         this.finish('blocked', handler.status === 'blocked' ? `${handler.reason}. Please open Clock and create it there.` : 'No available Clock handler was established. Please open Clock and create it there.', revision); return;
       }
-      const proposal: ClockProposal & { revision: number; stepKey?: string } = { ...(this.currentStep && { stepKey: this.currentStep.key }), id: randomUUID(), operation: clock.command.name, app: 'Clock', handlerPackage: handler.handlerPackage, ...clock, revision };
-      this.proposal = proposal;
-      this.finish('confirming', clock.detail, revision, structuredClone({ id: proposal.id, operation: proposal.operation, app: proposal.app, handlerPackage: proposal.handlerPackage, command: proposal.command, detail: proposal.detail }));
+      // Creating a timer or alarm is easily undone, so it runs directly; ADR 0003 confirmation covers send, submit, buy and delete.
+      await this.createClock({ id: randomUUID(), operation: clock.command.name, app: 'Clock', handlerPackage: handler.handlerPackage, ...clock }, revision, signal);
       return;
     }
   }
@@ -727,18 +726,10 @@ export class PhoneTask {
     this.finish('unknown', `I tapped send, but the message doesn't show as sent to ${proposal.recipient} yet. I won't send it again; check the conversation.`, revision);
   }
 
+  /** Dispatches a Clock intent whose handler was just resolved. */
   private async createClock(proposal: ClockProposal, revision: number, signal: AbortSignal) {
     const owns = () => revision === this.revision && !signal.aborted;
     if (!this.native || !owns()) return;
-    // Refresh both foreground evidence and handler availability after the user's answer.
-    await this.phone.state();
-    if (!owns()) return;
-    const handler = await executeNativeCommand({ name: 'resolve_handler', args: { target: proposal.operation === 'create_timer' ? 'timer' : 'alarm' } }, this.native);
-    if (!owns()) return;
-    if (handler.status !== 'observed' || !('available' in handler) || !handler.available) {
-      this.finish('blocked', handler.status === 'blocked' ? `${handler.reason}. Nothing was created; please use Clock manually.` : 'Clock is unavailable. Nothing was created; please use the Clock app.', revision); return;
-    }
-    if (handler.handlerPackage !== proposal.handlerPackage) { this.finish('blocked', 'The Clock handler changed after approval. Say continue to review a fresh proposal.', revision); return; }
     if (this.execution.clockUnknown) { this.finish('unknown', 'Check the earlier Clock creation before creating another.', revision); return; }
     this.execution.clockUnknown = proposal.command;
     let result;
@@ -749,12 +740,9 @@ export class PhoneTask {
     if (!owns()) return;
     if (result.status === 'blocked') { this.finish('blocked', `${result.reason} Please use Clock manually or fix its permission, then ask again.`, revision); return; }
     if (result.status !== 'handoff') { this.finish('unknown', 'Clock outcome is unknown. Inspect Clock before creating another.', revision); return; }
-    try {
-      const observation = await this.phone.state();
-      if (!owns()) return;
-      const opened = observation.app.packageName === result.handlerPackage;
-      this.finish('unknown', opened ? 'Clock opened, but the created timer or alarm is not independently verified. Please check Clock; I will not create it again.' : 'Clock accepted the request, but its resulting screen and event are not verified. Please check Clock; I will not create it again.', revision, undefined, { kind: 'intent_handoff', operation: proposal.operation, handlerPackage: result.handlerPackage, verified: false });
-    } catch { if (owns()) this.finish('unknown', 'Clock accepted the request, but the result is not verified. Please check Clock.', revision); }
+    // Clock accepted the intent. It exposes no event to read back, so the handoff is the outcome; it is never replayed.
+    this.execution.clockUnknown = undefined;
+    this.finish('completed', proposal.detail, revision, undefined, { kind: 'intent_handoff', operation: proposal.operation, handlerPackage: result.handlerPackage, verified: false });
   }
 
   private finish(state: TaskStatus['state'], detail: string, revision: number, proposal?: Proposal, evidence?: OperationEvidence) {

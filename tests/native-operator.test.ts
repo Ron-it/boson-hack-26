@@ -23,7 +23,7 @@ test('explicit media volume is completed only by matching native readback', asyn
   assert.match(statuses.at(-1)?.detail ?? '', /6.*15/);
 });
 
-test('timer creation requires one concrete approval and intent acceptance is not completion', async () => {
+test('a timer starts directly once and is never replayed', async () => {
   const { phone, statuses } = fixture();
   const commands: string[] = [];
   const task = new PhoneTask(phone, status => statuses.push(status), {}, { decide: async () => ({ actionId: 'blocked', confidence: null, returnedModel: null }) }, async name => {
@@ -31,22 +31,14 @@ test('timer creation requires one concrete approval and intent acceptance is not
     return name === 'resolve_handler' ? { status: 'observed', available: true, handlerPackage: 'com.android.deskclock' }
       : { status: 'handoff', handlerPackage: 'com.android.deskclock', note: 'Inspect Clock.' };
   });
-  await task.submit({ instruction: 'Five minute tea timer', timer: { seconds: 300, label: 'Tea' } });
-  assert.deepEqual(commands, ['resolve_handler']);
-  const proposal = statuses.at(-1)?.proposal;
-  assert.ok(proposal);
-  assert.equal(statuses.at(-1)?.state, 'confirming');
-  assert.match(statuses.at(-1)?.detail ?? '', /300 seconds.*Tea/);
-  const answer = task.answer(proposal.id, true);
-  await answer.settled;
-  assert.equal(task.answer(proposal.id, true).status, 'expired');
-  assert.equal(commands.filter(name => name === 'create_timer').length, 1);
-  assert.equal(statuses.at(-1)?.state, 'unknown');
-  assert.match(statuses.at(-1)?.detail ?? '', /Clock.*not.*verified/i);
+  await task.submit({ instruction: 'Five minute tea timer', app: 'Clock', timer: { seconds: 300, label: 'Tea' } });
+  assert.deepEqual(commands, ['resolve_handler', 'create_timer'], 'no confirmation, and naming Clock adds no UI step');
+  assert.equal(statuses.at(-1)?.state, 'completed');
+  assert.equal(statuses.at(-1)?.proposal, undefined);
+  assert.match(statuses.at(-1)?.detail ?? '', /Started a 300 second timer named "Tea"/);
   await task.resume();
   assert.equal(commands.filter(name => name === 'create_timer').length, 1);
 });
-
 test('unacknowledged media volume survives replacement sessions and is inspected before any retry', async () => {
   const { phone, statuses } = fixture();
   let writes = 0;
@@ -78,16 +70,11 @@ test('alarm ambiguity asks before mutation and explicit PM becomes device-local 
   await task.submit({ instruction: 'Alarm at 7:30', alarm: { hour: 7, minute: 30, label: '' } });
   assert.equal(statuses.at(-1)?.state, 'question');
   assert.match(statuses.at(-1)?.detail ?? '', /AM or PM/);
-  await task.submit({ instruction: '7:30 PM', alarm: { hour: 7, minute: 30, period: 'pm', label: '' } });
-  assert.equal(statuses.at(-1)?.state, 'question');
-  assert.match(statuses.at(-1)?.detail ?? '', /next occurrence/);
-  await task.submit({ instruction: 'Next 7:30 PM', alarm: { hour: 7, minute: 30, period: 'pm', occurrence: 'next', label: 'Call' } });
-  const proposal = statuses.at(-1)?.proposal;
-  assert.ok(proposal);
-  await task.answer(proposal.id, true).settled;
+  assert.deepEqual(payloads, []);
+  await task.submit({ instruction: '7:30 PM', alarm: { hour: 7, minute: 30, period: 'pm', label: 'Call' } });
   assert.deepEqual(payloads, [{ hour: 19, minute: 30, label: 'Call' }]);
+  assert.equal(statuses.at(-1)?.state, 'completed');
 });
-
 test('independent native read can finish during inference while a replacement mutation waits for ownership', async () => {
   const { phone, statuses } = fixture();
   const entered = Promise.withResolvers<void>();
@@ -110,43 +97,10 @@ test('independent native read can finish during inference while a replacement mu
   assert.equal(statuses.at(-1)?.state, 'completed');
 });
 
-test('Clock approval expires if the resolved handler changes before dispatch', async () => {
-  const { phone, statuses } = fixture();
-  let handlerPackage = 'clock.original';
-  let creates = 0;
-  const task = new PhoneTask(phone, status => statuses.push(status), {}, { decide: async () => ({ actionId: 'blocked', confidence: null, returnedModel: null }) }, async name => {
-    if (name === 'resolve_handler') return { status: 'observed', available: true, handlerPackage };
-    creates++;
-    return { status: 'handoff', handlerPackage, note: 'Inspect Clock' };
-  });
-  await task.submit({ instruction: 'Tea timer', timer: { seconds: 300, label: 'Tea' } });
-  const proposal = statuses.at(-1)?.proposal;
-  assert.ok(proposal);
-  handlerPackage = 'clock.replacement';
-  await task.answer(proposal.id, true).settled;
-  assert.equal(creates, 0);
-  assert.equal(statuses.at(-1)?.state, 'blocked');
-});
-
 test('a media shortcut cannot claim a combined messaging request complete', async () => {
   const { task, statuses } = fixture();
   await task.submit({ instruction: 'Volume 40% and send hello', mediaVolume: 40, message: 'Hello' });
   assert.equal(statuses.at(-1)?.state, 'question');
-});
-
-test('published Clock proposal cannot change the operation approved by its id', async () => {
-  const { phone, statuses } = fixture();
-  const created: object[] = [];
-  const task = new PhoneTask(phone, status => statuses.push(status), {}, { decide: async () => ({ actionId: 'blocked', confidence: null, returnedModel: null }) }, async (name, args) => {
-    if (name === 'create_timer') created.push(args);
-    return name === 'resolve_handler' ? { status: 'observed', available: true } : { status: 'handoff', handlerPackage: 'clock', note: 'Inspect Clock' };
-  });
-  await task.submit({ instruction: 'Tea timer', timer: { seconds: 300, label: 'Tea' } });
-  const proposal = statuses.at(-1)?.proposal;
-  assert.ok(proposal && proposal.operation === 'create_timer');
-  if (proposal.command.name === 'create_timer') proposal.command.args.seconds = 60;
-  await task.answer(proposal.id, true).settled;
-  assert.deepEqual(created, [{ seconds: 300, label: 'Tea' }]);
 });
 
 test('native permission denial explains recovery and permits a later explicit request', async () => {
