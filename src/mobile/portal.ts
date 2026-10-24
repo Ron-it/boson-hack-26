@@ -34,6 +34,7 @@ const nodeSchema = z.object({
   isVisibleToUser: z.boolean(),
   isScrollable: z.boolean(),
   isEditable: z.boolean(),
+  isFocused: z.boolean().optional(),
   isPassword: z.boolean(),
   actionList: z.array(z.object({ id: z.number(), name: z.string() })),
   rangeInfo: z.object({
@@ -67,21 +68,26 @@ function checkableControls(node: UiNode): UiNode[] {
   return node.isCheckable ? [node] : node.children.flatMap(checkableControls);
 }
 
-function describeElement(node: UiNode, index: number, text: string) {
+function describeElement(node: UiNode, index: number, text: string, parent: number | null) {
   const controls = node.isClickable ? checkableControls(node) : [];
   // Android preferences often put the label and an unlabeled switch in one clickable row.
   const control = node.isCheckable ? node : controls.length === 1 ? controls[0] : undefined;
   return {
     index,
+    parent,
     resourceId: node.resourceId,
     className: node.className,
+    role: node.className.slice(node.className.lastIndexOf('.') + 1),
     text: node.isPassword ? '[password field]' : text,
+    /** The node's own content description, such as a message bubble's sender and delivery state. */
+    description: node.isPassword ? '' : node.contentDescription,
     bounds: node.boundsInScreen,
     clickable: node.isClickable,
     enabled: node.isEnabled,
     checked: control?.isChecked ?? null,
     state: node.stateDescription || control?.stateDescription || '',
     editable: node.isEditable && !node.isPassword,
+    ...(node.isFocused !== undefined && { focused: node.isFocused }),
     scrollable: node.isScrollable,
     scrollDirections: {
       up: node.actionList.some(action => action.name === 'SCROLL_BACKWARD' || action.name === 'SCROLL_UP'),
@@ -91,30 +97,43 @@ function describeElement(node: UiNode, index: number, text: string) {
   };
 }
 
-function visibleElements(root: UiNode) {
+type Bounds = z.infer<typeof boundsSchema>;
+
+function visibleElements(root: UiNode, viewport: Bounds) {
   const elements: ReturnType<typeof describeElement>[] = [];
-  const screen = root.boundsInScreen;
-  function visit(node: UiNode) {
+  function visit(node: UiNode, parent: number | null) {
     const bounds = node.boundsInScreen;
     const visible = node.isVisibleToUser
-      && bounds.right > Math.max(bounds.left, screen.left)
-      && bounds.bottom > Math.max(bounds.top, screen.top)
-      && bounds.left < screen.right
-      && bounds.top < screen.bottom;
+      && bounds.right > Math.max(bounds.left, viewport.left)
+      && bounds.bottom > Math.max(bounds.top, viewport.top)
+      && bounds.left < viewport.right
+      && bounds.top < viewport.bottom;
     const label = node.text || node.contentDescription
       || (node.isClickable ? node.children.flatMap(childLabels).slice(0, 3).join(' | ') : '');
-    if (visible && (label || node.isScrollable || node.rangeInfo)) {
-      elements.push(describeElement(node, elements.length + 1, label));
+    let index = parent;
+    // Unlabeled controls still matter: an icon button or an empty field is something the user can see and use.
+    if (visible && (label || node.isClickable || node.isEditable || node.isCheckable || node.isScrollable || node.rangeInfo)) {
+      index = elements.length + 1;
+      elements.push(describeElement(node, index, label, parent));
     }
-    node.children.forEach(visit);
+    node.children.forEach(child => visit(child, index));
   }
-  visit(root);
+  visit(root, null);
   return elements;
 }
 
-export function parseObservation(raw: unknown) {
+export type DisplaySize = { width: number; height: number };
+
+/**
+ * The accessibility root is the active window, which can be a dialog or sheet.
+ * Its bounds are display geometry only when it starts at the display origin and no better source exists.
+ */
+export function parseObservation(raw: unknown, display: DisplaySize | null = null) {
   const state = stateSchema.parse(raw);
-  const bounds = state.a11y_tree.boundsInScreen;
+  const root = state.a11y_tree.boundsInScreen;
+  const screen = display ? { ...display, source: 'display' as const }
+    : root.left === 0 && root.top === 0 ? { width: root.right, height: root.bottom, source: 'window' as const }
+    : null;
   return {
     app: {
       currentApp: state.phone_state.currentApp || state.a11y_tree.packageName,
@@ -122,12 +141,34 @@ export function parseObservation(raw: unknown) {
       activityName: state.phone_state.activityName || '',
     },
     rootPackage: state.a11y_tree.packageName,
-    screen: { width: bounds.right - bounds.left, height: bounds.bottom - bounds.top },
-    elements: visibleElements(state.a11y_tree),
+    rootBounds: root,
+    screen,
+    elements: visibleElements(state.a11y_tree, screen ? { left: 0, top: 0, right: screen.width, bottom: screen.height } : root),
   };
 }
 
+/** Reads width and height from a PNG header, which is the captured display size. */
+export function pngSize(bytes: Uint8Array): DisplaySize {
+  const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+  if (bytes.length < 24 || !signature.every((byte, index) => bytes[index] === byte)) {
+    throw new Error('Portal did not return a PNG screenshot; check accessibility access');
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return { width: view.getUint32(16), height: view.getUint32(20) };
+}
+
+/** Portal reverse and JSON replies carry base64 PNG, optionally as a data URL. */
+export function decodeScreenshot(result: unknown) {
+  const encoded = z.string().parse(result);
+  const bytes = new Uint8Array(Buffer.from(encoded.replace(/^data:image\/png;base64,/, ''), 'base64'));
+  pngSize(bytes);
+  return bytes;
+}
+
 type Parameters = Record<string, string | number | boolean>;
+
+/** Launchable apps as Portal lists them. */
+export const packagesSchema = z.array(z.object({ packageName: z.string(), label: z.string() }));
 
 export function createPortal(environment: NodeJS.ProcessEnv = process.env) {
   const config = configuration.parse(environment);
@@ -187,27 +228,28 @@ export function createPortal(environment: NodeJS.ProcessEnv = process.env) {
   return {
     version: () => json('/version'),
     async state() {
-      return parseObservation(await json('/state_full?filter=true'));
+      const raw = await json('/state_full?filter=true');
+      let display: DisplaySize | null = null;
+      try { display = pngSize(await this.screenshot()); } catch { /* Window geometry remains an explicitly marked fallback. */ }
+      return parseObservation(raw, display);
     },
     openSettings: () => json('/app', { package: 'com.android.settings' }),
     tap: (x: number, y: number) => json('/tap', { x, y }),
     swipe: (startX: number, startY: number, endX: number, endY: number) =>
       json('/swipe', { startX, startY, endX, endY, duration: 300 }),
     back: () => json('/global', { action: 1 }),
+    /** Replaces the focused field's text. It never presses Enter or an IME send action. */
+    typeText: (text: string) => json('/keyboard/input', { base64_text: Buffer.from(text).toString('base64'), clear: true }),
+    launch: (packageName: string) => json('/app', { package: packageName }),
+    packages: async () => packagesSchema.parse(await json('/packages')),
     async screenshot() {
       const response = await request('/screenshot');
-      let bytes: Uint8Array;
       if (response.headers.get('content-type')?.includes('application/json')) {
         const raw: unknown = await response.json();
-        const encoded = z.string().parse(decodeReply(raw));
-        bytes = Buffer.from(encoded.replace(/^data:image\/png;base64,/, ''), 'base64');
-      } else {
-        bytes = new Uint8Array(await response.arrayBuffer());
+        return decodeScreenshot(decodeReply(raw));
       }
-      const pngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
-      if (!pngSignature.every((byte, index) => bytes[index] === byte)) {
-        throw new Error('Portal did not return a PNG screenshot; check accessibility access');
-      }
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      pngSize(bytes);
       return bytes;
     },
   };
@@ -215,4 +257,8 @@ export function createPortal(environment: NodeJS.ProcessEnv = process.env) {
 
 export type PhoneObservation = ReturnType<typeof parseObservation>;
 
-export type PhoneControl = Pick<ReturnType<typeof createPortal>, 'state' | 'openSettings' | 'tap' | 'swipe' | 'back'>;
+export type PhoneControl = Pick<ReturnType<typeof createPortal>, 'state' | 'openSettings' | 'tap' | 'swipe' | 'back' | 'typeText' | 'launch' | 'packages'>
+  & Partial<Pick<ReturnType<typeof createPortal>, 'screenshot'>>;
+
+/** Read-only access for contextual help. It deliberately has no mutation methods. */
+export type ScreenReader = Pick<ReturnType<typeof createPortal>, 'state' | 'screenshot'>;

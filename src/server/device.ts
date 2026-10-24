@@ -1,14 +1,18 @@
+import { measure } from './timing.ts';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import { z } from 'zod';
-import { parseObservation, type PhoneControl } from '../mobile/portal.ts';
+import { decodeScreenshot, packagesSchema, parseObservation, pngSize, type DisplaySize, type PhoneControl, type ScreenReader } from '../mobile/portal.ts';
 
 const replySchema = z.object({ id: z.string(), status: z.string(), result: z.unknown().optional(), error: z.string().optional() });
 
 /** One connection owns its pending requests. A disconnected mutation is never replayed. */
 export class DeviceConnection {
+  private timingOwner = randomUUID();
   private pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
-  readonly phone: PhoneControl;
+  /** Geometry is refreshed for every observation, including dialogs that fit an obsolete orientation. */
+  private display: DisplaySize | null | undefined;
+  readonly phone: PhoneControl & ScreenReader;
   readonly socket: WebSocket;
   readonly id: string;
 
@@ -16,11 +20,19 @@ export class DeviceConnection {
     this.socket = socket;
     this.id = id;
     this.phone = {
-      state: async () => parseObservation(await this.request('state', { filter: true })),
+      state: async () => {
+        const raw = await this.request('state', { filter: true });
+        await this.capture().catch(() => { this.display = null; });
+        return parseObservation(raw, this.display ?? null);
+      },
+      screenshot: () => this.capture(),
       openSettings: () => this.request('app', { package: 'com.android.settings' }),
       tap: (x, y) => this.request('tap', { x, y }),
       swipe: (startX, startY, endX, endY) => this.request('swipe', { startX, startY, endX, endY, duration: 300 }),
       back: () => this.request('global', { action: 1 }),
+      typeText: text => this.request('keyboard/input', { base64_text: Buffer.from(text).toString('base64'), clear: true }),
+      launch: packageName => this.request('app', { package: packageName }),
+      packages: async () => packagesSchema.parse(await this.request('packages')),
     };
     socket.on('message', data => {
       try {
@@ -54,6 +66,12 @@ export class DeviceConnection {
       this.pending.set(id, { resolve, reject, timer });
       this.socket.send(JSON.stringify({ id, method, params }));
     });
+  }
+
+  private async capture() {
+    const bytes = decodeScreenshot(await measure({ owner: this.timingOwner, revision: 0 }, 'portal_screenshot', () => this.request('screenshot', { hideOverlay: true })));
+    this.display = pngSize(bytes);
+    return bytes;
   }
 
   private rejectPending() {

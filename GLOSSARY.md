@@ -31,6 +31,21 @@ _Avoid_: Phone control, when referring to the choice rather than the ability to 
 The ability to read the phone's current interface and operate its controls.
 _Avoid_: Phone operator, when referring only to that capability.
 
+**UI task**:
+A phone task that visibly operates apps on the user's screen. The user can
+interrupt the assistant or take over the task.
+_Avoid_: Background task, when the assistant needs the visible screen.
+
+**Guidance**:
+Step-by-step help requested by a user who wants to operate the phone themselves.
+_Avoid_: Task execution, when the assistant is only explaining the steps.
+
+**Confirmation**:
+The user's spoken approval of one concrete proposed final action, such as sending
+a specific message to a specific person. It applies once, and a correction,
+pause or handoff withdraws it.
+_Avoid_: Permission, when referring to an Android grant.
+
 **Observed result**:
 A phone state read after an action, such as Night Light visibly being off.
 _Avoid_: Successful tap, as proof of the requested state.

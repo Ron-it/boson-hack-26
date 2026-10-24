@@ -6,12 +6,16 @@ import { z } from 'zod';
 import Audio from './modules/boson-audio/src/BosonAudioModule';
 
 const eventSchema = z.object({
-  type: z.string(), state: z.string().optional(), detail: z.string().optional(),
-  goal: z.string().optional(), message: z.string().optional(),
-  transcript: z.string().optional(), delta: z.string().optional(), response_id: z.string().optional(),
+  type: z.string(), state: z.string().nullish(), detail: z.string().nullish(),
+  goal: z.string().nullish(), message: z.string().nullish(), mode: z.enum(['do', 'guide']).nullish(),
+  transcript: z.string().nullish(), delta: z.string().nullish(), response_id: z.string().nullish(),
 });
 type Event = z.infer<typeof eventSchema>;
-const initialSession = { active: false, state: 'Ready when you are', error: '', goal: '', task: '', user: '', assistant: '', response: '' };
+const taskLabels: Record<string, string> = {
+  working: 'Working', paused: 'Paused', confirming: 'Waiting for your OK', question: 'Needs your answer',
+  declined: 'Declined', completed: 'Done', blocked: 'Stopped', unknown: 'Outcome unknown',
+};
+const initialSession = { active: false, state: 'Ready when you are', error: '', goal: '', task: '', taskState: '', mode: 'do', screen: '', user: '', assistant: '', response: '' };
 function reduceSession(state: typeof initialSession, event: Event) {
   if (event.type === 'reset') return initialSession;
   if (event.type === 'notice') return { ...state, error: event.message || '' };
@@ -20,7 +24,11 @@ function reduceSession(state: typeof initialSession, event: Event) {
     if (event.state === 'stopped') return { ...state, active: false, state: 'Session ended' };
     return { ...state, active: true, state: event.detail || 'Listening' };
   }
-  if (event.type === 'task') return { ...state, goal: event.goal || '', task: event.state === 'completed' ? 'Settings checked' : event.detail || '' };
+  if (event.type === 'task') return { ...state, goal: event.goal || '', task: event.detail || '', taskState: taskLabels[event.state ?? ''] ?? '' };
+  if (event.type === 'help') {
+    const screen = event.state === 'unavailable' ? `Can't see this screen. ${event.detail || ''}` : event.detail;
+    return { ...state, mode: event.mode || state.mode, screen: screen ?? state.screen };
+  }
   if (event.type === 'conversation.item.input_audio_transcription.completed') return { ...state, user: event.transcript || '' };
   if (event.type === 'response.output_audio_transcript.done') return { ...state, assistant: event.transcript || '' };
   if (event.type === 'response.output_audio_transcript.delta') return { ...state, response: event.response_id || '', assistant: (event.response_id === state.response ? state.assistant : '') + (event.delta || '') };
@@ -41,6 +49,7 @@ function PhoneScreen() {
   const [token, setToken] = useState('');
   const [setup, setSetup] = useState(!config.configured);
   const [brightness, setBrightness] = useState(() => Audio.canSetBrightness());
+  const [overlay, setOverlay] = useState(() => Audio.canShowOverlay());
 
   const consume = useCallback((json: string) => {
     try { const parsed = eventSchema.safeParse(JSON.parse(json)); if (parsed.success) dispatch(parsed.data); } catch { /* Native event was incomplete. */ }
@@ -48,6 +57,7 @@ function PhoneScreen() {
   useEffect(() => {
     const refresh = () => {
       setBrightness(Audio.canSetBrightness());
+      setOverlay(Audio.canShowOverlay());
       try {
         const values = z.record(z.string(), z.string()).parse(JSON.parse(Audio.snapshot()));
         for (const [key, json] of Object.entries(values)) if (!key.endsWith('.delta')) consume(json);
@@ -80,23 +90,26 @@ function PhoneScreen() {
       <Text style={[styles.supporting, { color: colors.secondary }]}>Speak. Watch it happen. Change your mind.</Text>
       <View accessibilityLiveRegion="polite" style={styles.session}>
         <Text style={[styles.headline, { color: colors.text }]}>{session.state}</Text>
-        <Text style={[styles.body, { color: colors.secondary }]}>{session.active ? 'Your microphone stays on in Settings. You can interrupt at any time.' : 'Try “Set brightness to 70% and turn on Night Light.”'}</Text>
+        <Text style={[styles.body, { color: colors.secondary }]}>{!session.active ? 'Try “Help me with this” or “Turn on Night Light.”' : session.mode === 'guide' ? 'Showing you how. I won’t touch the phone.' : 'Your microphone stays on in other apps. You can interrupt at any time.'}</Text>
+        {!!session.screen && <Text style={[styles.body, { color: colors.text }]}>{session.screen}</Text>}
       </View>
       {!!session.error && <Text accessibilityRole="alert" style={[styles.body, { color: colors.error }]}>{session.error}</Text>}
       <Pressable accessibilityRole="button" disabled={!config.configured && !session.active} onPress={session.active ? () => Audio.stop() : start} style={({ pressed }) => [styles.primary, { backgroundColor: colors.primary, opacity: pressed ? 0.75 : !config.configured ? 0.45 : 1 }]}>
         <Text style={[styles.buttonText, { color: colors.onPrimary }]}>{session.active ? 'Stop listening' : 'Start listening'}</Text>
       </Pressable>
-      {!session.active && <Text style={[styles.caption, { color: colors.secondary }]}>Audio goes to Boson. Settings controls are read by the phone agent.</Text>}
+      {!session.active && <Text style={[styles.caption, { color: colors.secondary }]}>Audio goes to Boson. The screen is read only when you ask for help or a task.</Text>}
       {!!session.goal && <View style={styles.section}>
         <Text style={[styles.label, { color: colors.secondary }]}>Current request</Text>
         <Text style={[styles.body, { color: colors.text }]}>{session.goal}</Text>
-        <Text style={[styles.body, { color: colors.secondary }]}>{session.task}</Text>
+        {!!session.taskState && <Text style={[styles.label, { color: colors.secondary, marginTop: 8 }]}>{session.taskState}</Text>}
+        <Text selectable style={[styles.body, { color: colors.secondary }]}>{session.task}</Text>
       </View>}
       {(!!session.user || !!session.assistant) && <View style={styles.section}>
         {!!session.user && <><Text style={[styles.label, { color: colors.secondary }]}>You</Text><Text selectable style={[styles.body, { color: colors.text }]}>{session.user}</Text></>}
-        {!!session.assistant && <><Text style={[styles.label, { color: colors.secondary, marginTop: 16 }]}>Phone</Text><Text selectable style={[styles.body, { color: colors.text }]}>{session.assistant}</Text></>}
+        {!!session.assistant && <><Text style={[styles.label, { color: colors.secondary, marginTop: 16 }]}>{session.assistant.trim().endsWith('?') ? 'Question' : 'Phone'}</Text><Text selectable style={[styles.body, { color: colors.text }]}>{session.assistant}</Text></>}
       </View>}
       {!session.active && <View style={styles.section}>
+        <Pressable accessibilityRole="button" style={styles.textButton} onPress={() => Audio.requestOverlayPermission()}><Text style={[styles.buttonText, { color: colors.primary }]}>{overlay ? 'Status shows over other apps' : 'Show status over other apps'}</Text></Pressable>
         <Pressable accessibilityRole="button" style={styles.textButton} onPress={() => Audio.requestBrightnessPermission()}><Text style={[styles.buttonText, { color: colors.primary }]}>{brightness ? 'Brightness control enabled' : 'Enable instant brightness control'}</Text></Pressable>
         <Pressable accessibilityRole="button" style={styles.textButton} onPress={() => setSetup(value => !value)}><Text style={[styles.buttonText, { color: colors.primary }]}>{setup ? 'Hide connection' : 'Connection settings'}</Text></Pressable>
         {setup && <View style={styles.fields}>

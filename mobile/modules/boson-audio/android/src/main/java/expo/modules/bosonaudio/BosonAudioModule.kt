@@ -28,6 +28,11 @@ class BosonAudioModule : Module() {
       val context = appContext.reactContext!!
       context.startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
+    Function("canShowOverlay") { Settings.canDrawOverlays(appContext.reactContext!!) }
+    Function("requestOverlayPermission") {
+      val context = appContext.reactContext!!
+      context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
     Function("start") {
       val context = appContext.reactContext!!
       check(appContext.currentActivity != null) { "Open the app to start listening" }
