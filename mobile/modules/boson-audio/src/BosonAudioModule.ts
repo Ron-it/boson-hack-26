@@ -6,6 +6,8 @@ declare class BosonAudioModule extends NativeModule<{ onEvent: (event: { json: s
   snapshot(): string;
   canSetBrightness(): boolean;
   requestBrightnessPermission(): void;
+  canShowOverlay(): boolean;
+  requestOverlayPermission(): void;
   start(): void;
   stop(): void;
 }
