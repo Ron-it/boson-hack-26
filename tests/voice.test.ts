@@ -222,3 +222,87 @@ test('blocked Settings announcement gives the recovery instruction without a gen
   assert.match(event.response.instructions, /Open Display settings, then say continue/);
   assert.match(event.response.instructions, /Do not greet/);
 });
+
+
+import { harness } from './fixtures.ts';
+
+test('accepted async work waits for observed outcome instead of starting an idle voice reply', async () => {
+  const gate = Promise.withResolvers<void>();
+  let writes = 0;
+  const journey = await harness(() => { throw new Error('No UI required'); }, { native: async name => {
+    if (name === 'set_media_volume') { writes++; await gate.promise; return { status: 'completed', stream: 'media', requestedPercent: 40, requestedIndex: 6, observedIndex: 6, minIndex: 0, maxIndex: 15 }; }
+    return { status: 'observed', stream: 'media', observedIndex: 6, minIndex: 0, maxIndex: 15 };
+  } });
+  try {
+    await journey.call('update_phone_task', { instruction: 'Media volume 40%', mediaVolume: 40 });
+    await journey.until(() => writes === 1 ? true : undefined, 'pending native operation');
+    assert.equal(journey.announcements.length, 0, 'acceptance must not request an idle response before the result');
+    journey.provider({ type: 'response.created', response: { id: 'unowned' } });
+    journey.provider({ type: 'response.output_audio_transcript.done', response_id: 'unowned', transcript: 'How can I help you with your phone today?' });
+    journey.provider({ type: 'response.output_audio.delta', response_id: 'unowned', delta: 'synthetic' });
+    journey.provider({ type: 'response.done', response: { id: 'unowned', status: 'completed', output: [] } });
+    await new Promise(resolve => setTimeout(resolve, 40));
+    assert.equal(journey.appEvents.some(event => event.response_id === 'unowned'), false, 'unowned speech while work is pending is not played');
+    gate.resolve();
+    await journey.until(() => journey.appEvents.find(event => event.type === 'task' && event.state === 'completed'), 'fresh observed outcome');
+    await journey.until(() => journey.announcements.length === 1 ? true : undefined, 'one result announcement');
+    assert.match(journey.announcements[0] ?? '', /Observed media volume 6/);
+    assert.match(JSON.stringify(journey.responseRequests[0]?.input), /Observed media volume 6/, 'the response has explicit grounded input, not only instructions');
+    assert.equal(writes, 1);
+  } finally { gate.resolve(); await journey.close(); }
+});
+
+test('a new intentional user question can speak while old task audio and late completion are ignored', async () => {
+  const gate = Promise.withResolvers<void>();
+  let writes = 0;
+  const h = await harness(() => ({}), { native: async () => { writes++; await gate.promise; return { status: 'unknown', reason: 'Synthetic interruption' }; } });
+  try {
+    await h.call('update_phone_task', { instruction: 'Media volume 40%', mediaVolume: 40 });
+    await h.until(() => writes === 1 ? true : undefined, 'native dispatch');
+    h.provider({ type: 'response.created', response: { id: 'old-pending' } });
+    h.speak();
+    h.provider({ type: 'response.created', response: { id: 'intentional-question' } });
+    h.provider({ type: 'response.done', response: { id: 'old-pending', status: 'completed' } });
+    h.provider({ type: 'response.output_audio_transcript.done', response_id: 'intentional-question', transcript: 'The time is shown in the status bar.' });
+    h.provider({ type: 'response.output_audio.delta', response_id: 'intentional-question', delta: 'answer' });
+    h.provider({ type: 'response.output_audio.delta', response_id: 'old-pending', delta: 'late' });
+    await h.until(() => h.appEvents.find(event => event.response_id === 'intentional-question' && event.type === 'response.output_audio.delta'), 'intentional answer audio');
+    assert.equal(h.appEvents.some(event => event.response_id === 'old-pending'), false);
+    assert.ok(h.appEvents.some(event => event.type === 'task' && event.state === 'paused'));
+    h.provider({ type: 'response.done', response: { id: 'intentional-question', status: 'completed' } });
+    h.provider({ type: 'response.output_audio.delta', response_id: 'intentional-question', delta: 'after-done' });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(h.appEvents.filter(event => event.type === 'response.output_audio.delta').length, 1);
+    assert.equal(writes, 1);
+  } finally { gate.resolve(); await h.close(); }
+});
+
+
+test('a missing voice response completion becomes a visible unknown without replaying the action', async () => {
+  let writes = 0;
+  const h = await harness(() => ({}), { holdResponses: true, responseDeadlineMs: 80, native: async () => {
+    writes++; return { status: 'completed', stream: 'media', requestedPercent: 40, requestedIndex: 6, observedIndex: 6, minIndex: 0, maxIndex: 15 };
+  } });
+  try {
+    await h.call('update_phone_task', { instruction: 'Media volume 40%', mediaVolume: 40 });
+    await h.until(() => h.appEvents.find(event => event.type === 'voice_issue' && event.state === 'unknown'), 'voice timeout issue', 1000);
+    assert.ok(h.appEvents.some(event => event.type === 'task' && event.state === 'completed'));
+    assert.equal(h.announcements.length, 1, 'a missing speech acknowledgment cannot replay narration or phone work');
+    assert.equal(writes, 1);
+  } finally { await h.close(); }
+});
+
+test('a late old response completion cannot erase a new turn tool carried by argument events', async () => {
+  let writes = 0;
+  const h = await harness(() => ({}), { native: async () => { writes++; return { status: 'completed', stream: 'media', requestedPercent: 40, requestedIndex: 6, observedIndex: 6, minIndex: 0, maxIndex: 15 }; } });
+  try {
+    h.provider({ type: 'response.created', response: { id: 'old-turn', metadata: null } });
+    h.speak();
+    h.provider({ type: 'response.created', response: { id: 'new-turn', metadata: null } });
+    h.provider({ type: 'response.function_call_arguments.done', response_id: 'new-turn', name: 'update_phone_task', call_id: 'new-call', arguments: JSON.stringify({ instruction: 'Media volume 40%', mediaVolume: 40 }) });
+    h.provider({ type: 'response.done', response: { id: 'old-turn', status: 'cancelled', output: [] } });
+    h.provider({ type: 'response.done', response: { id: 'new-turn', status: 'completed', output: [] } });
+    await h.until(() => writes === 1 ? true : undefined, 'new turn tool', 500);
+    assert.equal(writes, 1);
+  } finally { await h.close(); }
+});

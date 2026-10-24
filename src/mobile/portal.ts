@@ -34,6 +34,7 @@ const nodeSchema = z.object({
   isVisibleToUser: z.boolean(),
   isScrollable: z.boolean(),
   isEditable: z.boolean(),
+  isFocused: z.boolean().optional(),
   isPassword: z.boolean(),
   actionList: z.array(z.object({ id: z.number(), name: z.string() })),
   rangeInfo: z.object({
@@ -86,6 +87,7 @@ function describeElement(node: UiNode, index: number, text: string, parent: numb
     checked: control?.isChecked ?? null,
     state: node.stateDescription || control?.stateDescription || '',
     editable: node.isEditable && !node.isPassword,
+    ...(node.isFocused !== undefined && { focused: node.isFocused }),
     scrollable: node.isScrollable,
     scrollDirections: {
       up: node.actionList.some(action => action.name === 'SCROLL_BACKWARD' || action.name === 'SCROLL_UP'),
@@ -226,7 +228,10 @@ export function createPortal(environment: NodeJS.ProcessEnv = process.env) {
   return {
     version: () => json('/version'),
     async state() {
-      return parseObservation(await json('/state_full?filter=true'));
+      const raw = await json('/state_full?filter=true');
+      let display: DisplaySize | null = null;
+      try { display = pngSize(await this.screenshot()); } catch { /* Window geometry remains an explicitly marked fallback. */ }
+      return parseObservation(raw, display);
     },
     openSettings: () => json('/app', { package: 'com.android.settings' }),
     tap: (x: number, y: number) => json('/tap', { x, y }),
@@ -252,7 +257,8 @@ export function createPortal(environment: NodeJS.ProcessEnv = process.env) {
 
 export type PhoneObservation = ReturnType<typeof parseObservation>;
 
-export type PhoneControl = Pick<ReturnType<typeof createPortal>, 'state' | 'openSettings' | 'tap' | 'swipe' | 'back' | 'typeText' | 'launch' | 'packages'>;
+export type PhoneControl = Pick<ReturnType<typeof createPortal>, 'state' | 'openSettings' | 'tap' | 'swipe' | 'back' | 'typeText' | 'launch' | 'packages'>
+  & Partial<Pick<ReturnType<typeof createPortal>, 'screenshot'>>;
 
 /** Read-only access for contextual help. It deliberately has no mutation methods. */
 export type ScreenReader = Pick<ReturnType<typeof createPortal>, 'state' | 'screenshot'>;
