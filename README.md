@@ -130,6 +130,6 @@ client and operator
 
 ## Team
 
-Ronit Buti ([@Ron-it](https://github.com/Ron-it)) · Arut ([@arutprakash](https://github.com/arutprakash)) · Aryan · Atharva · Prakhar
+Ronit Buti ([@Ron-it](https://github.com/Ron-it)) · Arut ([@arutprakash](https://github.com/arutprakash)) · Aryan · Atharva Shahane ([@atharvashahane28](https://github.com/atharvashahane28)) · Prakhar
 
 <sub>Project record: [product](PRODUCT.md) · [design](DESIGN.md) · [glossary](GLOSSARY.md) · [runtime](docs/runtime.md) · [decisions](docs/decisions.md) · [ADRs](docs/adr/) · [model comparison](docs/model-comparison.md) · [research](docs/research.md)</sub>
