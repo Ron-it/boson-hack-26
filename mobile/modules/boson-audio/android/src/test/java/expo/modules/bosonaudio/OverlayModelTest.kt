@@ -29,7 +29,7 @@ class OverlayModelTest {
     model.playback(null, 20)
     model.voiceResponse(voice("finished", 1), 20)
     val frame = model.frame(10_000)
-    assertEquals(Tone.BUSY, frame.tone)
+    assertEquals(Tone.ACTING, frame.tone)
     assertEquals("Working", frame.label)
     assertEquals("Opening Display settings", frame.line)
   }

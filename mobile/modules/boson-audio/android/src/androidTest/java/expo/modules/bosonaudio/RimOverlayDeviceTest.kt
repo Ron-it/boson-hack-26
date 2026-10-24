@@ -54,6 +54,9 @@ class RimOverlayDeviceTest {
 
     overlay.update { session("listening") }
     capture("01-ready", overlay)
+    // Idle breathes on a ~4 s cycle; half a cycle later the rim is at the other end of its breath.
+    Thread.sleep(1200)
+    capture("01b-ready-breath", overlay)
     overlay.update { speechStarted() }
     capture("02-listening", overlay, Level.MIC)
 
@@ -94,8 +97,18 @@ class RimOverlayDeviceTest {
     Thread.sleep(2500)
     capture("13-settings-hides-overlay", overlay)
 
+    // Reduced motion: with animations off the rim holds a still frame.
+    context.startActivity(context.packageManager.getLaunchIntentForPackage("com.google.android.deskclock")!!.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    val scale = String(shell("settings get global animator_duration_scale")).trim()
+    shell("settings put global animator_duration_scale 0")
+    Thread.sleep(2500)
+    overlay.update { speechStarted() }
+    capture("14-reduced-motion-a", overlay, Level.MIC)
+    capture("14-reduced-motion-b", overlay, Level.MIC)
+    shell("settings put global animator_duration_scale ${if (scale == "null") "1.0" else scale}")
+
     overlay.stop()
     Thread.sleep(500)
-    capture("14-removed", overlay)
+    capture("15-removed", overlay)
   }
 }
