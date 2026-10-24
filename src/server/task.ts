@@ -9,12 +9,12 @@ import { z } from 'zod';
 import type { PhoneControl, PhoneObservation } from '../mobile/portal.ts';
 import { createSelector } from '../mobile/selectors.ts';
 import { capabilityFor, type Outgoing } from '../mobile/capabilities.ts';
-import { workflowRequestSchema, type ContentSelection } from '../mobile/workflows.ts';
+import { appOpenedEvidence, workflowRequestSchema, type ContentSelection } from '../mobile/workflows.ts';
 
 /** What the user is asked to approve. Approval applies once, to exactly this payload and request revision. */
 type MessageProposal = { id: string; operation: 'send_message'; app: string; recipient: string; message: string };
 export type Proposal = MessageProposal | ClockProposal;
-export type TaskStatus = { type: 'task'; state: 'paused' | 'working' | 'confirming' | 'question' | 'declined' | 'completed' | 'blocked' | 'unknown'; goal: string; detail: string; revision: number; proposal?: Proposal; evidence?: OperationEvidence; progress?: OperationProgress[] };
+export type TaskStatus = { type: 'task'; state: 'paused' | 'working' | 'confirming' | 'question' | 'declined' | 'completed' | 'blocked' | 'unknown'; goal: string; detail: string; revision: number; awaitingContinue?: true; proposal?: Proposal; evidence?: OperationEvidence; progress?: OperationProgress[] };
 
 const singleLine = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\r\n]*$/, 'Use a single line');
 export const phoneRequestSchema = z.object({
@@ -179,7 +179,7 @@ export class PhoneTask {
     this.nativePending = request.brightness !== undefined && this.native !== undefined;
     this.brightnessEvidence = undefined;
     if (this.explicitlyPaused) {
-      this.emit({ type: 'task', state: 'paused', goal: this.goal, detail: 'Request updated. Say continue when ready.', revision: this.revision });
+      this.emit({ type: 'task', state: 'paused', goal: this.goal, detail: 'Request updated. Say continue when ready.', revision: this.revision, awaitingContinue: true });
       return Promise.resolve();
     }
     return this.schedule();
@@ -269,6 +269,9 @@ export class PhoneTask {
         check: async (args, _scope, evidence) => {
           if (evidence?.kind === 'message_sent') return evidence;
           const current = await this.phone.state();
+          if (args.outcome?.kind === 'app_opened' && evidence?.kind === 'app_opened') {
+            return appOpenedEvidence(current, { packageName: evidence.packageName, label: args.app ?? evidence.packageName }) ?? false;
+          }
           return capabilityFor(current)?.outcome?.(current, args, evidence?.kind === 'content_opened' ? evidence.selection : undefined) ?? false;
         },
       }),
@@ -377,6 +380,12 @@ export class PhoneTask {
     // Every screen-affecting operation is inside the same serialized tail.
     const first = await this.phone.state();
     check();
+    if (request.outcome?.kind === 'app_opened') {
+      if (!request.app) { this.finish('question', 'Which app should I open?', revision); return; }
+      if (request.message || request.recipient || request.values?.length) {
+        this.finish('question', 'Should I only open the app, or complete the message or search?', revision); return;
+      }
+    }
     for (const value of request.values ?? []) {
       const source = value.source;
       if (source.kind === 'screen' && (source.text !== value.text || first.app.packageName !== source.packageName
@@ -406,12 +415,35 @@ export class PhoneTask {
     let apps: { packageName: string; label: string }[] = [];
     if (request.app) {
       const wanted = request.app;
-      const installed = await this.phone.packages();
+      const installed = await measure(this.timingContext(), 'resolve_app', () => this.phone.packages());
       check();
       const exact = installed.filter(app => app.label.toLowerCase() === wanted.toLowerCase());
       apps = exact.length ? exact : installed.filter(app => contains(app.label, wanted));
       if (!apps.length) { this.finish('blocked', `I can't find an app called ${wanted} on this phone.`, revision); return; }
       if (apps.length > 1) { this.finish('question', `Which app do you mean: ${apps.slice(0, 3).map(app => app.label).join(' or ')}?`, revision); return; }
+    }
+    const targetApp = apps[0];
+    if (request.outcome?.kind === 'app_opened' && targetApp) {
+      const current = await this.phone.state();
+      check();
+      const alreadyOpen = appOpenedEvidence(current, targetApp);
+      if (alreadyOpen) { this.finish('completed', alreadyOpen.detail, revision, undefined, alreadyOpen); return; }
+      check();
+      try { await measure(this.timingContext(), 'launch_app', () => this.phone.launch(targetApp.packageName)); }
+      catch { check(); this.finish('unknown', 'Opening the app was not acknowledged. Say continue to inspect the phone.', revision); return; }
+      check();
+      const started = performance.now();
+      try {
+        while (performance.now() - started < 5_000) {
+          const current = await readStableScreen(this.phone, signal);
+          check();
+          const evidence = appOpenedEvidence(current, targetApp);
+          if (evidence) { this.finish('completed', evidence.detail, revision, undefined, evidence); return; }
+          await delay(100, undefined, { signal });
+        }
+      } finally { timing(this.timingContext(), 'foreground_check', started); }
+      check();
+      this.finish('unknown', `Opening ${targetApp.label} was acknowledged, but I couldn't observe it in the foreground. Please check the phone.`, revision); return;
     }
     if (this.execution.brightnessUnknown && this.native && request.brightness !== undefined) {
       // A repeated model tool call is not permission to replay an unacknowledged write.
