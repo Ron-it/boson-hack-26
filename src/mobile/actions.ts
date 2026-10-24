@@ -4,7 +4,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { capabilityFor, type Effect } from './capabilities.ts';
 import { globalActions, type PhoneControl, type PhoneObservation } from './portal.ts';
-import type { WorkflowRequest } from './workflows.ts';
 
 const actionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('tap'), x: z.number(), y: z.number() }),
@@ -13,10 +12,9 @@ const actionSchema = z.discriminatedUnion('type', [
     endX: z.number(), endY: z.number(),
   }),
   z.object({ type: z.literal('type'), x: z.number(), y: z.number(), field: z.string(), text: z.string() }),
-  z.object({ type: z.literal('launch'), packageName: z.string() }),
   // A supported send control. It is never dispatched here; only the operator's approval gate can tap it.
   z.object({ type: z.literal('send'), label: z.string(), resourceId: z.string() }),
-  z.object({ type: z.enum(['back', 'open_settings', 'wait', 'done', 'blocked', 'ask', 'enter', 'open_app', 'open_link']) }),
+  z.object({ type: z.enum(['back', 'wait', 'done', 'blocked', 'ask', 'enter', 'open_app', 'open_link']) }),
   z.object({ type: z.literal('global'), action: z.enum(['home', 'recent_apps', 'notifications', 'quick_settings']) }),
   z.object({ type: z.literal('native'), tool: z.enum(['set_timer', 'set_alarm', 'set_media_volume', 'set_brightness']) }),
   // An irreversible control. It is never dispatched here; the operator asks the user first.
@@ -34,28 +32,14 @@ export type ActionCandidate = {
   effect?: Effect;
 };
 
-/** Values the operator may type. They come from the user's request, never from the model or the screen. */
 export type CandidateContext = {
-  request?: WorkflowRequest & { recipient?: string | undefined; message?: string | undefined };
-  apps?: { packageName: string; label: string }[];
+  /** A message's recipient and words. They come from the user's request, never from the model or the screen. */
+  request?: { recipient?: string | undefined; message?: string | undefined };
   /** Which phone-wide tools exist here. Each one runs through Portal or a native command, never through screen taps. */
   tools?: { global?: boolean; key?: boolean; deepLink?: boolean; native?: boolean };
   /** The user already answered a question for this goal; the operator must act instead of asking again. */
   answered?: boolean;
 };
-
-export function assertSettingsScreen(observation: PhoneObservation) {
-  const settings = observation.rootPackage === 'com.android.settings';
-  const brightnessDialog = observation.rootPackage === 'com.android.systemui'
-    && observation.elements.some(element => element.resourceId === 'com.android.systemui:id/slider');
-  if (!settings && !brightnessDialog) {
-    throw new Error('The display experiment stopped outside Settings. Unlock the phone and reopen Settings.');
-  }
-}
-
-export function screenFingerprint(observation: PhoneObservation) {
-  return createHash('sha256').update(JSON.stringify(observation)).digest('hex');
-}
 
 /** Only the foreground and coordinate frame need to settle; a clock is allowed to keep ticking. */
 function frame(observation: PhoneObservation) {
@@ -161,8 +145,7 @@ export function actionCandidates(observation: PhoneObservation, context: Candida
         });
       }
     } else if (effect.kind === 'enter') {
-      const text = effect.field === 'recipient' || effect.field === 'message' ? context.request?.[effect.field]
-        : context.request?.values?.find(value => value.field === effect.field)?.text;
+      const text = effect.field === 'recipient' || effect.field === 'message' ? context.request?.[effect.field] : undefined;
       if (text) candidates.push({
         id: `type_${element.index}_${effect.field}`,
         description: `Type the requested ${effect.field} ${JSON.stringify(text)} into the field showing ${JSON.stringify(element.text)}. Replaces its text; does not send.`,
@@ -180,11 +163,6 @@ export function actionCandidates(observation: PhoneObservation, context: Candida
         id: `send_${element.index}`,
         description: `Ask the user for approval to send the requested message with ${JSON.stringify(element.text)}. It is sent only after they confirm.`,
         action: { type: 'send', label: element.text, resourceId: element.resourceId }, element, effect,
-      });
-    } else if (effect.kind === 'open_content') {
-      const outcome = context.request?.outcome;
-      if (outcome?.kind === 'content_opened' && effect.name === outcome.name) candidates.push({
-        id: `open_${element.index}`, description: `Open the requested image ${JSON.stringify(effect.name)}.`, action: { type: 'tap', x, y }, element, effect,
       });
     } else if (effect.kind === 'irreversible') {
       const label = element.text || element.description;
@@ -208,9 +186,6 @@ export function actionCandidates(observation: PhoneObservation, context: Candida
       });
     }
   }
-  context.apps?.forEach((app, index) => candidates.push({
-    id: `launch_${index}`, description: `Open ${app.label}.`, action: { type: 'launch', packageName: app.packageName },
-  }));
 
   if (screen && capability) for (const element of observation.elements.filter(element => element.scrollable && element.enabled)) {
     const left = Math.max(0, element.bounds.left);
@@ -251,7 +226,6 @@ export function actionCandidates(observation: PhoneObservation, context: Candida
       { id: 'set_media_volume', description: 'Set media volume instantly. Supply the percentage as value.', action: { type: 'native', tool: 'set_media_volume' } },
       { id: 'set_brightness', description: 'Set screen brightness instantly. Supply the percentage (10-100) as value.', action: { type: 'native', tool: 'set_brightness' } },
     ] satisfies ActionCandidate[] : [],
-    { id: 'open_settings', description: 'Open Android Settings.', action: { type: 'open_settings' } },
     { id: 'wait', description: 'The screen is transitioning. Wait briefly and observe again.', action: { type: 'wait' } },
     { id: 'done', description: 'The goal is achieved or its answer is visible. Supply the answer as text when the user asked something.', action: { type: 'done' } },
     ...context.answered ? [] : [{ id: 'ask', description: 'The goal itself is ambiguous (for example several matching contacts). Supply the specific question as text.', action: { type: 'ask' } } satisfies ActionCandidate],
@@ -271,7 +245,6 @@ export async function executeAction(portal: PhoneControl, candidate: ActionCandi
       await portal.tap(action.x, action.y);
       await beforeInput();
       return portal.typeText(action.text);
-    case 'launch': return portal.launch(action.packageName);
     case 'send': throw new Error('Sending needs the user\'s approval; nothing was tapped.');
     case 'back': return portal.back();
     case 'global':
@@ -284,7 +257,6 @@ export async function executeAction(portal: PhoneControl, candidate: ActionCandi
     case 'open_link':
     case 'native': throw new Error('The operator resolves this action before dispatch.');
     case 'confirm_tap': throw new Error('This tap needs the user\'s approval; nothing was tapped.');
-    case 'open_settings': return portal.openSettings();
     case 'wait': return new Promise<void>(resolve => setTimeout(resolve, 350));
     case 'done':
     case 'ask':

@@ -24,7 +24,6 @@ export class DeviceConnection {
         return parseObservation(raw, await this.display(raw));
       },
       screenshot: () => this.capture(),
-      openSettings: () => this.request('app', { package: 'com.android.settings' }),
       tap: (x, y) => this.request('tap', { x, y }),
       swipe: (startX, startY, endX, endY) => this.request('swipe', { startX, startY, endX, endY, duration: 300 }),
       back: () => this.request('global', { action: 1 }),

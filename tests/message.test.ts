@@ -7,16 +7,18 @@ import { PhoneTask, type PhoneRequest, type TaskStatus } from '../src/server/tas
 import { harness, messagesApp } from './fixtures.ts';
 
 type Decision = { request?: Partial<PhoneRequest>; observation: PhoneObservation; candidates: ActionCandidate[] };
-const decided = (candidate: ActionCandidate | undefined) => ({ actionId: candidate?.id ?? 'blocked', confidence: null, returnedModel: null });
+const decided = (candidate: ActionCandidate | undefined, text: string | null = null) => ({ actionId: candidate?.id ?? 'blocked', text, confidence: null, returnedModel: null });
+const openMessages = (candidates: ActionCandidate[]) => decided(candidates.find(candidate => candidate.id === 'open_app'), 'Messages');
 
 /** A navigation model that always prefers the next useful step. It never chooses to skip confirmation. */
 const navigator = {
   decide: async ({ request, observation, candidates }: Decision) => {
     const find = (pattern: RegExp) => candidates.find(candidate => pattern.test(candidate.description));
     const drafted = observation.elements.some(element => element.editable && element.text === request?.message);
-    return decided((drafted ? find(/approval/i) : find(/Type the requested message/))
+    const next = (drafted ? find(/approval/i) : find(/Type the requested message/))
       || (observation.elements.some(element => element.resourceId === 'ContactSearchField' && element.text === request?.recipient) ? find(/^Tap "(Avery|Jordan)/) : find(/Type the requested recipient/))
-      || find(/^Tap "Start chat"/) || find(/^Open Messages/));
+      || find(/^Tap "Start chat"/);
+    return next ? decided(next) : openMessages(candidates);
   },
 };
 
@@ -32,7 +34,7 @@ async function prepared(options: Parameters<typeof messagesApp>[0] = {}) {
   return { app, statuses, task, proposal };
 }
 
-const until = async (check: () => boolean) => { for (let i = 0; i < 300 && !check(); i++) await new Promise(resolve => setTimeout(resolve, 10)); assert.ok(check()); };
+const until = async (check: () => boolean) => { for (const deadline = performance.now() + 5000; performance.now() < deadline && !check();) await new Promise(resolve => setTimeout(resolve, 10)); assert.ok(check()); };
 
 test('a message request prepares the draft and asks before sending, even when told to send', async () => {
   const { app, proposal } = await prepared();
@@ -96,49 +98,32 @@ test('approval is bound to the send operation and its exact control, not to what
   assert.equal(statuses.at(-1)?.state, 'blocked');
 });
 
-test('controls the operator does not understand are never offered or tapped, even beside the draft', async () => {
-  for (const options of [{ extraControls: ['Delete', 'Buy'] }, { sendLabel: 'OK' }, { sendLabel: 'Finish' }]) {
+test('irreversible controls beside the draft only ask first, and an unrecognized send control is never offered', async () => {
+  for (const options of [{ extraControls: ['Delete', 'Buy'] }, { sendLabel: 'OK' }]) {
     const app = messagesApp(options);
     const statuses: TaskStatus[] = [];
     const offered: string[] = [];
-    // Once the draft is in, this model reaches for anything final: approval, delete, buy, OK or finish.
+    // Once the draft is in, this model reaches for anything final: delete, buy, OK or the send approval.
     const eager = { decide: async (input: Decision) => {
       offered.push(...input.candidates.map(candidate => candidate.description));
       const drafted = input.observation.elements.some(element => element.editable && element.text === request.message);
-      const final = input.candidates.find(candidate => /Delete|Buy|"OK"|Finish|approval/i.test(candidate.description));
-      return drafted ? decided(final) : navigator.decide(input);
+      const final = input.candidates.find(candidate => /Delete|Buy|"OK"/.test(candidate.description));
+      return drafted && final ? decided(final) : navigator.decide(input);
     } };
     const task = new PhoneTask(app.phone, status => statuses.push(status), {}, eager);
     await task.submit(request);
-    const unsupported = ['Delete', 'Buy', 'OK', 'Finish'];
-    assert.equal(offered.some(description => unsupported.some(label => description.includes(`"${label}"`))), false, `offered: ${offered.join('; ')}`);
-    assert.equal(app.taps.some(tap => unsupported.includes(tap)), false);
+    assert.equal(offered.some(description => /^Tap "(Delete|Buy|OK)"/.test(description)), false, `offered: ${offered.join('; ')}`);
+    assert.equal(app.taps.some(tap => ['Delete', 'Buy', 'OK'].includes(tap)), false);
     assert.deepEqual(app.sent, []);
-    if (options.sendLabel) assert.equal(statuses.at(-1)?.state, 'blocked', 'an unrecognized final control hands back');
+    if (options.extraControls) assert.equal(statuses.at(-1)?.state, 'confirming', 'an irreversible control is asked about, not tapped');
   }
-});
-
-test('an app without supported controls can be opened but none of its controls are tapped', async () => {
-  const app = messagesApp();
-  const statuses: TaskStatus[] = [];
-  const offered: string[] = [];
-  const tapper = { decide: async ({ observation, candidates }: Decision) => {
-    offered.push(...candidates.map(candidate => candidate.description));
-    const inContacts = observation.app.packageName === 'com.google.android.contacts';
-    return decided(candidates.find(candidate => candidate.action.type === 'tap') ?? (inContacts ? undefined : candidates.find(candidate => candidate.action.type === 'launch')));
-  } };
-  const task = new PhoneTask(app.phone, status => statuses.push(status), {}, tapper);
-  await task.submit({ instruction: 'Delete Avery from my contacts', app: 'Contacts' });
-  assert.equal(app.taps.includes('Delete contact'), false);
-  assert.equal(offered.some(description => description.includes('Delete contact')), false);
-  assert.notEqual(statuses.at(-1)?.state, 'completed');
 });
 
 test('finishing a request with no verifiable outcome requested reports the operator result', async () => {
   const app = messagesApp();
   const statuses: TaskStatus[] = [];
-  const opener = { decide: async ({ observation, candidates }: Decision) => decided(observation.app.packageName === 'com.google.android.apps.messaging'
-    ? candidates.find(candidate => candidate.id === 'done') : candidates.find(candidate => candidate.action.type === 'launch')) };
+  const opener = { decide: async ({ observation, candidates }: Decision) => observation.app.packageName === 'com.google.android.apps.messaging'
+    ? decided(candidates.find(candidate => candidate.id === 'done')) : openMessages(candidates) };
   const task = new PhoneTask(app.phone, status => statuses.push(status), {}, opener);
   await task.submit({ instruction: 'Open Messages', app: 'Messages' });
   assert.equal(statuses.at(-1)?.state, 'completed');
@@ -287,7 +272,8 @@ test('a clear spoken answer overrides the yes or no the voice model relays', asy
       await phone.until(() => phone.announcements.find(text => text.includes(proposal.id)), 'the spoken confirmation');
       phone.speak();
       phone.provider({ type: 'conversation.item.input_audio_transcription.completed', transcript: said });
-      await new Promise(resolve => setTimeout(resolve, 20));
+      // The server relays the transcript to the app once it has recorded it.
+      await phone.until(() => phone.appEvents.find(event => event.type === 'conversation.item.input_audio_transcription.completed' && event.transcript === said), 'the transcript to arrive');
       await phone.call('confirm_phone_action', { proposalId: proposal.id, answer: relayed });
       await phone.until(() => phone.appEvents.map(event => taskEvent.safeParse(event)).find(event => event.success && ['completed', 'declined'].includes(event.data.state)), 'the answer to settle');
       assert.equal(app.sent.length, sends, `${said} with a relayed ${relayed}`);

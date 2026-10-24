@@ -29,7 +29,6 @@ class PhoneCommandsTest {
     assertEquals(result.toString(), "completed", result.getString("status"))
     assertEquals(6, result.getInt("observedIndex"))
     assertEquals(2, audio.getStreamVolume(AudioManager.STREAM_RING))
-    assertEquals(6, commands.execute("read_media_volume", JSONObject()).getInt("observedIndex"))
   }
   @Test fun timerHandoffUsesExplicitDurationAndVisibleClockWithoutClaimingSaved() {
     shadowOf(RuntimeEnvironment.getApplication()).grantPermissions("com.android.alarm.permission.SET_ALARM")
@@ -61,11 +60,8 @@ class PhoneCommandsTest {
     assertEquals(false, intent.getBooleanExtra(AlarmClock.EXTRA_SKIP_UI, true))
   }
 
-  @Test fun missingClockHandlerIsObservableAndCannotLaunch() {
+  @Test fun missingClockHandlerBlocksWithoutLaunching() {
     val commands = PhoneCommands(context)
-    val result = commands.execute("resolve_handler", JSONObject().put("target", "timer"))
-    assertEquals(result.toString(), "observed", result.getString("status"))
-    assertEquals(false, result.getBoolean("available"))
     shadowOf(RuntimeEnvironment.getApplication()).grantPermissions("com.android.alarm.permission.SET_ALARM")
     assertEquals("blocked", commands.execute("create_timer", JSONObject().put("seconds", 60).put("label", "")).getString("status"))
     assertEquals(null, shadowOf(RuntimeEnvironment.getApplication()).nextStartedActivity)

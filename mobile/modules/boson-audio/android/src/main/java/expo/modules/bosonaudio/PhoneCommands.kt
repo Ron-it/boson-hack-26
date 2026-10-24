@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.provider.AlarmClock
-import android.provider.Settings
 import android.media.AudioManager
 import org.json.JSONObject
 import kotlin.math.roundToInt
@@ -18,8 +17,8 @@ class PhoneCommands(private val context: Context) {
     return try {
       check(!context.getSystemService(KeyguardManager::class.java).isDeviceLocked) { "Unlock the phone first" }
       when (name) {
-        "read_media_volume", "set_media_volume" -> {
-          requireKeys(args, if (name == "set_media_volume") setOf("percent") else emptySet())
+        "set_media_volume" -> {
+          requireKeys(args, setOf("percent"))
           val audio = context.getSystemService(AudioManager::class.java)
           val min = audio.getStreamMinVolume(AudioManager.STREAM_MUSIC)
           val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
@@ -41,19 +40,6 @@ class PhoneCommands(private val context: Context) {
                 if (target != observed) put("reason", "Android media volume did not retain the requested index. Inspect before retrying.")
               }
             }
-        }
-        "resolve_handler" -> {
-          requireKeys(args, setOf("target"))
-          val action = when (args.get("target")) {
-            "timer" -> AlarmClock.ACTION_SET_TIMER
-            "alarm" -> AlarmClock.ACTION_SET_ALARM
-            "display" -> Settings.ACTION_DISPLAY_SETTINGS
-            else -> error("Unsupported handler target")
-          }
-          val handler = Intent(action).resolveActivity(context.packageManager)
-          JSONObject().put("status", "observed").put("available", handler != null).apply {
-            if (handler != null) put("handlerPackage", handler.packageName)
-          }
         }
         "create_timer", "create_alarm" -> {
           val timer = name == "create_timer"

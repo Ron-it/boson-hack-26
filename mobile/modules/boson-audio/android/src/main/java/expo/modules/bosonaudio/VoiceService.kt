@@ -225,11 +225,6 @@ class VoiceService : Service() {
     try {
       check(!getSystemService(KeyguardManager::class.java).isDeviceLocked) { "Unlock the phone first" }
       when (event.getString("name")) {
-        "open_display" -> { startActivity(Intent(Settings.ACTION_DISPLAY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); result.put("status", "opened") }
-        "read_brightness" -> {
-          val actual = Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS)
-          result.put("status", "observed").put("observedRawValue", actual)
-        }
         "set_brightness" -> {
           check(Settings.System.canWrite(this)) { "Enable brightness control in the voice app, or use the Settings UI task" }
           val percent = event.getJSONObject("args").getDouble("percent").coerceIn(10.0, 100.0)
@@ -241,7 +236,7 @@ class VoiceService : Service() {
           check(actual == value) { "Brightness did not retain the requested value" }
           result.put("status", "completed").put("requestedPercent", percent).put("observedRawValue", actual).put("note", "Approximate Android slider percentage; adaptive brightness remains unchanged.")
         }
-        "read_media_volume", "set_media_volume", "resolve_handler", "create_timer", "create_alarm" -> {
+        "set_media_volume", "create_timer", "create_alarm" -> {
           result = PhoneCommands(this).execute(event.getString("name"), event.getJSONObject("args"))
         }
         else -> error("Unknown phone command")

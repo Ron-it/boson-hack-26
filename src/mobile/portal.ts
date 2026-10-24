@@ -288,7 +288,7 @@ export function createPortal(environment: NodeJS.ProcessEnv = process.env) {
 
 export type PhoneObservation = ReturnType<typeof parseObservation>;
 
-export type PhoneControl = Pick<ReturnType<typeof createPortal>, 'state' | 'openSettings' | 'tap' | 'swipe' | 'back' | 'typeText' | 'launch' | 'packages'>
+export type PhoneControl = Pick<ReturnType<typeof createPortal>, 'state' | 'tap' | 'swipe' | 'back' | 'typeText' | 'launch' | 'packages'>
   & Partial<Pick<ReturnType<typeof createPortal>, 'screenshot' | 'global' | 'key' | 'deepLink'>>;
 
 /** Android accessibility global actions that Portal performs without any model call. */
