@@ -1,0 +1,41 @@
+package expo.modules.bosonaudio
+
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import expo.modules.kotlin.modules.Module
+import expo.modules.kotlin.modules.ModuleDefinition
+
+class BosonAudioModule : Module() {
+  override fun definition() = ModuleDefinition {
+    Name("BosonAudio")
+
+    Events("onEvent")
+    OnCreate { VoiceState.listener = { event -> sendEvent("onEvent", mapOf("json" to event)) } }
+    OnDestroy { VoiceState.listener = null }
+    Function("snapshot") { VoiceState.snapshot() }
+    Function("configuration") {
+      val prefs = appContext.reactContext!!.getSharedPreferences("connection", 0)
+      mapOf("url" to prefs.getString("url", ""), "configured" to !prefs.getString("token", "").isNullOrBlank())
+    }
+    Function("configure") { url: String, token: String ->
+      require(url.startsWith("https://")) { "Use an https server address" }
+      require(token.length >= 24) { "Enter the device pairing code" }
+      appContext.reactContext!!.getSharedPreferences("connection", 0).edit().putString("url", url.trimEnd('/')).putString("token", token).apply()
+    }
+    Function("canSetBrightness") { Settings.System.canWrite(appContext.reactContext!!) }
+    Function("requestBrightnessPermission") {
+      val context = appContext.reactContext!!
+      context.startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+    Function("start") {
+      val context = appContext.reactContext!!
+      check(appContext.currentActivity != null) { "Open the app to start listening" }
+      context.startForegroundService(Intent(context, VoiceService::class.java))
+    }
+    Function("stop") {
+      val context = appContext.reactContext!!
+      context.stopService(Intent(context, VoiceService::class.java))
+    }
+  }
+}
