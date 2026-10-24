@@ -317,6 +317,36 @@ export class PhoneTask {
       try { await this.native('open_display', {}); }
       catch { check(); this.finish('unknown', 'Opening Settings was not acknowledged. Say continue to inspect the phone.', revision); return; }
       check();
+      // startActivity can return normally even when Android denies a background
+      // launch. Observe entry, then use Portal's accessibility-owned launch once.
+      const enteredSettings = async () => {
+        let settingsReads = 0;
+        for (let attempt = 0; attempt < 10; attempt++) {
+          check();
+          try {
+            const observation = await this.phone.state();
+            check();
+            settingsReads = observation.rootPackage === 'com.android.settings' ? settingsReads + 1 : 0;
+            if (settingsReads >= 2) return true;
+          } catch (error) {
+            check();
+            // Portal briefly loses the active root while Android switches windows.
+            if (!(error instanceof Error) || !/^(Portal: )?No active window or root filtered out$/.test(error.message)) throw error;
+            settingsReads = 0;
+          }
+          await delay(100, undefined, { signal });
+        }
+        return false;
+      };
+      if (!await enteredSettings()) {
+        check();
+        await this.phone.openSettings();
+        check();
+        if (!await enteredSettings()) {
+          this.finish('blocked', "I couldn't open Settings. Open Display settings, then say continue.", revision);
+          return;
+        }
+      }
     }
     const history: string[] = [];
     let minimumMs = 120;
