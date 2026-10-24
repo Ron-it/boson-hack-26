@@ -1,14 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { once } from 'node:events';
-import type { AddressInfo } from 'node:net';
-import WebSocket, { WebSocketServer } from 'ws';
 import { z } from 'zod';
-import { DeviceConnection } from '../src/server/device.ts';
-import type { ScreenDescriber } from '../src/server/help.ts';
-import { VoiceSession } from '../src/server/voice.ts';
-
-type Portal = (method: string, params: Record<string, unknown>) => unknown;
+import { harness } from './fixtures.ts';
 
 function view(overrides: Record<string, unknown> = {}) {
   return {
@@ -66,68 +59,6 @@ const sparseScreen = {
   phone_state: { currentApp: 'Example Game', packageName: 'com.example.game', activityName: 'MainActivity' },
 };
 
-const outputSchema = z.object({ type: z.literal('conversation.item.create'), item: z.object({ call_id: z.string(), output: z.string() }) });
-
-async function harness(portal: Portal, options: { describeScreen?: ScreenDescriber | null } = {}) {
-  const server = new WebSocketServer({ port: 0 });
-  await once(server, 'listening');
-  const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const accepted: WebSocket[] = [];
-  const nextAccepted = () => new Promise<WebSocket>(resolve => server.once('connection', ws => { accepted.push(ws); resolve(ws); }));
-
-  const portalSeen: string[] = [];
-  const deviceSide = nextAccepted();
-  const portalClient = new WebSocket(url);
-  portalClient.on('message', data => {
-    const request = z.object({ id: z.string(), method: z.string(), params: z.record(z.string(), z.unknown()) }).parse(JSON.parse(data.toString()));
-    portalSeen.push(request.method);
-    try { portalClient.send(JSON.stringify({ id: request.id, status: 'success', result: JSON.stringify(portal(request.method, request.params)) })); }
-    catch (error) { portalClient.send(JSON.stringify({ id: request.id, status: 'error', error: error instanceof Error ? error.message : 'failed' })); }
-  });
-  const device = new DeviceConnection(await deviceSide, 'test-phone');
-
-  const appSide = nextAccepted();
-  const appClient = new WebSocket(url);
-  const appEvents: { type: string; [key: string]: unknown }[] = [];
-  appClient.on('message', data => appEvents.push(z.looseObject({ type: z.string() }).parse(JSON.parse(data.toString()))));
-  const appSocket = await appSide;
-
-  const bosonSide = nextAccepted();
-  const boson = new WebSocket(url);
-  const session = new VoiceSession(appSocket, device, { BOSON_API_KEY: 'synthetic' }, {
-    voiceSocket: await bosonSide,
-    selector: { decide: async () => ({ actionId: 'blocked', confidence: null, returnedModel: null }) },
-    describeScreen: null, ...options,
-  });
-  await once(boson, 'open');
-  const outputs: { call_id: string; output: unknown }[] = [];
-  boson.on('message', data => {
-    const parsed = outputSchema.safeParse(JSON.parse(data.toString()));
-    if (parsed.success) outputs.push({ call_id: parsed.data.item.call_id, output: JSON.parse(parsed.data.item.output) });
-  });
-
-  let calls = 0;
-  async function call(name: string, args: object) {
-    const callId = `call_${++calls}`;
-    boson.send(JSON.stringify({ type: 'response.created', response: { id: callId } }));
-    boson.send(JSON.stringify({ type: 'response.done', response: { id: callId, status: 'completed', output: [{ type: 'function_call', name, call_id: callId, arguments: JSON.stringify(args) }] } }));
-    for (let waited = 0; waited < 3000; waited += 10) {
-      const result = outputs.find(item => item.call_id === callId);
-      if (result) return result.output;
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-    throw new Error(`No tool output for ${name}`);
-  }
-
-  return {
-    call, portalSeen, appEvents,
-    async close() {
-      session.close();
-      for (const ws of [portalClient, appClient, boson, ...accepted]) ws.terminate();
-      server.close();
-    },
-  };
-}
 
 test('help with this reads the visible app as untrusted controls without opening Settings or changing the screen', async () => {
   const phone = await harness(method => {
