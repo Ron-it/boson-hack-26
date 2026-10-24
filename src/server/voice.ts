@@ -2,30 +2,32 @@ import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import { z } from 'zod';
 import type { DeviceConnection } from './device.ts';
-import { PhoneTask, type TaskStatus } from './task.ts';
+import { createSelector } from '../mobile/selectors.ts';
+import { PhoneTask, phoneRequestSchema, type TaskStatus } from './task.ts';
 
 const eventSchema = z.object({
   type: z.string(), delta: z.string().optional(), transcript: z.string().optional(),
   response_id: z.string().optional(), item_id: z.string().optional(),
   name: z.string().optional(), call_id: z.string().optional(), arguments: z.string().optional(),
-  response: z.object({ status: z.string().optional(), output: z.array(z.object({
+  response: z.object({ id: z.string().optional(), status: z.string().optional(), output: z.array(z.object({
     type: z.string(), name: z.string().optional(), call_id: z.string().optional(), arguments: z.string().optional(),
   })).optional() }).optional(),
   error: z.object({ code: z.string().optional() }).optional(),
 });
-const instructionSchema = z.object({ instruction: z.string().min(1).max(2000) });
+const instructionSchema = phoneRequestSchema;
 
 const instructions = `You are a concise, friendly voice assistant operating this Android phone.
 This prototype supports brightness and Night Light in Android Settings only. Explain that limit when asked for other tasks.
-Use set_brightness for an explicit brightness percentage. Use update_phone_task for display navigation and Night Light.
+Use set_brightness for brightness alone. Use update_phone_task for combined requests and Night Light, supplying concrete brightness and/or nightLight targets with the complete instruction. Retain requirements not cancelled by a correction.
 If direct brightness control is blocked by permission, use update_phone_task to adjust it through the Settings UI instead.
-When the user corrects an in-progress task, call update_phone_task with the COMPLETE corrected goal, retaining requirements they did not cancel. Speaking pauses phone actions automatically. Acknowledge briefly, then resume only the latest intent through a tool call. Use stop_phone_task for stop/cancel.
+When the user corrects an in-progress task, call update_phone_task with the COMPLETE corrected goal, retaining requirements they did not cancel. Speaking pauses phone actions automatically. Acknowledge briefly, then resume only the latest intent through a tool call. Use stop_phone_task for stop/cancel. Use pause_phone_task for explicit pause or manual takeover; it persists even across corrections. Use continue_phone_task only when the user explicitly asks to continue.
 The phone UI worker is separate from you. Do not describe an action as completed until the tool or a task update supplies observed evidence. Task started is not task completed.
 Never announce made-up phone values or keep chatting over the user. No long preambles.`;
 
 const tools = [
-  { type: 'function', name: 'update_phone_task', description: 'Start or replace the display-settings task with the complete latest user goal.', parameters: { type: 'object', properties: { instruction: { type: 'string' } }, required: ['instruction'], additionalProperties: false } },
-  { type: 'function', name: 'set_brightness', description: 'Set system brightness immediately to a user-requested percentage. Requires the phone brightness permission.', parameters: { type: 'object', properties: { percent: { type: 'number', minimum: 10, maximum: 100 } }, required: ['percent'], additionalProperties: false } },
+  { type: 'function', name: 'update_phone_task', description: 'Start or replace the display-settings task with the complete latest user goal.', parameters: { type: 'object', properties: { instruction: { type: 'string' }, brightness: { type: 'number', minimum: 10, maximum: 100 }, nightLight: { type: 'boolean' } }, required: ['instruction'], additionalProperties: false } },
+  { type: 'function', name: 'set_brightness', description: 'Schedule system brightness to a user-requested percentage. Requires the phone brightness permission.', parameters: { type: 'object', properties: { percent: { type: 'number', minimum: 10, maximum: 100 } }, required: ['percent'], additionalProperties: false } },
+  ...['pause_phone_task', 'continue_phone_task'].map(name => ({ type: 'function', name, description: name === 'pause_phone_task' ? 'Pause persistently for manual control until explicit continue.' : 'Continue the retained request from fresh phone state only when explicitly requested.', parameters: { type: 'object', properties: {}, additionalProperties: false } })),
   { type: 'function', name: 'stop_phone_task', description: 'Stop scheduling phone actions.', parameters: { type: 'object', properties: {}, additionalProperties: false } },
 ];
 
@@ -54,7 +56,9 @@ export class VoiceSession {
   private responseActive = false;
   private lastSpeechAt = 0;
   private revision = 0;
-  private calls = new Map<string, { name: string; arguments: string }>();
+  private responseRevision = -1;
+  private responseRevisions = new Map<string, number>();
+  private calls = new Map<string, { name: string; arguments: string; responseId: string }>();
   private handledCalls = new Set<string>();
   private commands = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
   private pendingAnnouncement: TaskStatus | undefined;
@@ -63,15 +67,15 @@ export class VoiceSession {
   private device: DeviceConnection;
   private firstInput = true;
   private firstOutput = true;
-  private onDeviceClose = () => this.close('Phone controls disconnected. Stop and reconnect Portal.');
+  private onDeviceClose = () => this.close('Phone controls disconnected. An in-flight action may have completed. Reconnect and inspect before continuing.');
 
-  constructor(app: WebSocket, device: DeviceConnection, environment = process.env) {
+  constructor(app: WebSocket, device: DeviceConnection, environment = process.env, adapters: { voiceSocket?: WebSocket; selector?: Pick<ReturnType<typeof createSelector>, 'decide'> } = {}) {
     this.app = app;
     this.device = device;
     const key = environment.BOSON_API_KEY;
     if (!key) throw new Error('Boson key is not configured on the server');
-    this.task = new PhoneTask(device.phone, status => this.onTaskStatus(status), environment);
-    this.boson = new WebSocket(bosonRealtimeUrl, { headers: { Authorization: `Bearer ${key}` } });
+    this.task = new PhoneTask(device.phone, status => this.onTaskStatus(status), environment, adapters.selector, (name, args) => this.command(name, args));
+    this.boson = adapters.voiceSocket ?? new WebSocket(bosonRealtimeUrl, { headers: { Authorization: `Bearer ${key}` } });
     this.boson.on('open', () => this.sendBoson({ type: 'session.update', session: bosonSessionConfiguration }));
     this.boson.on('message', data => {
       try { this.onBosonEvent(eventSchema.parse(JSON.parse(data.toString()))); }
@@ -104,7 +108,7 @@ export class VoiceSession {
     if (this.closed) return;
     this.closed = true;
     this.device.socket.removeListener('close', this.onDeviceClose);
-    this.task.pause('Session ended');
+    this.task.stop();
     clearTimeout(this.announcementTimer);
     if (message) this.sendApp({ type: 'notice', message });
     this.boson.close();
@@ -127,14 +131,19 @@ export class VoiceSession {
         this.lastSpeechAt = Date.now();
         this.revision++;
         this.pendingAnnouncement = undefined;
-        this.task.pause();
+        this.calls.clear();
+        this.task.interrupt();
         this.sendApp(event);
         return;
       case 'input_audio_buffer.speech_stopped':
         this.speaking = false;
         this.lastSpeechAt = Date.now();
         return;
-      case 'response.created': this.responseActive = true; return;
+      case 'response.created':
+        this.responseActive = true;
+        this.responseRevision = this.revision;
+        if (event.response?.id) this.responseRevisions.set(event.response.id, this.revision);
+        return;
       case 'response.output_audio.delta':
         if (this.firstOutput) { this.firstOutput = false; console.log('Voice output audio received'); }
         this.sendApp(event);
@@ -145,20 +154,21 @@ export class VoiceSession {
         this.sendApp(event);
         return;
       case 'response.function_call_arguments.done':
-        if (event.call_id && event.name && event.arguments && !this.handledCalls.has(event.call_id)) {
-          this.calls.set(event.call_id, { name: event.name, arguments: event.arguments });
+        if (event.response_id && this.responseRevisions.get(event.response_id) === this.revision && event.call_id && event.name && event.arguments && !this.handledCalls.has(event.call_id)) {
+          this.calls.set(event.call_id, { name: event.name, arguments: event.arguments, responseId: event.response_id });
         }
         return;
       case 'response.done': {
         this.responseActive = false;
         for (const item of event.response?.output ?? []) {
           if (item.type === 'function_call' && item.call_id && item.name && item.arguments && !this.handledCalls.has(item.call_id)) {
-            this.calls.set(item.call_id, { name: item.name, arguments: item.arguments });
+            this.calls.set(item.call_id, { name: item.name, arguments: item.arguments, responseId: event.response?.id ?? '' });
           }
         }
-        const calls = [...this.calls];
+        const calls = [...this.calls].filter(([, call]) => call.responseId === (event.response?.id ?? ''));
         this.calls.clear();
-        const revision = this.revision;
+        const revision = event.response?.id ? this.responseRevisions.get(event.response.id) ?? -1 : this.responseRevision;
+        if (event.response?.id) this.responseRevisions.delete(event.response.id);
         if (calls.length) void this.finishCalls(calls, revision, event.response?.status === 'completed');
         else this.announceWhenIdle();
         return;
@@ -178,16 +188,19 @@ export class VoiceSession {
       try {
         if (!completed || revision !== this.revision || this.speaking || this.closed) throw new Error('Interrupted before the tool could run');
         const raw: unknown = JSON.parse(call.arguments);
-        if (call.name === 'stop_phone_task') { this.task.pause('Stopped by request'); output = { status: 'stopped' }; }
+        if (call.name === 'stop_phone_task') { this.task.stop(); output = { status: 'stopped' }; }
         else if (call.name === 'update_phone_task') {
-          const { instruction } = instructionSchema.parse(raw);
-          await this.command('open_display', {});
-          if (revision !== this.revision || this.speaking || this.closed) throw new Error('Request was replaced while opening Settings');
-          this.task.start(instruction);
-          output = { status: 'started', instruction, note: 'The UI worker is running. Wait for observed results before claiming completion.' };
+          const request = instructionSchema.parse(raw);
+          void this.task.submit(request);
+          output = { status: 'accepted', note: 'Queued in the phone operator. Wait for observed results before claiming completion.' };
         } else if (call.name === 'set_brightness') {
           const { percent } = z.object({ percent: z.number().min(10).max(100) }).parse(raw);
-          output = z.record(z.string(), z.unknown()).parse(await this.command('set_brightness', { percent }));
+          void this.task.setBrightness(percent);
+          output = { status: 'accepted', note: 'Queued in the phone operator. Wait for observed results before claiming completion.' };
+        } else if (call.name === 'pause_phone_task') {
+          this.task.pause(); output = { status: 'paused', note: 'Say continue when ready.' };
+        } else if (call.name === 'continue_phone_task') {
+          void this.task.resume(); output = { status: 'accepted', note: 'Reassessing the current phone state.' };
         } else throw new Error('Unsupported tool');
       } catch (error) { output = { status: 'blocked', reason: error instanceof Error ? error.message : 'Tool failed' }; }
       this.sendBoson({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(output) } });
@@ -201,7 +214,7 @@ export class VoiceSession {
   private command(name: string, args: object): Promise<unknown> {
     const id = randomUUID();
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.commands.delete(id); reject(new Error('The phone did not acknowledge the command')); }, 5000);
+      const timer = setTimeout(() => { this.commands.delete(id); reject(new Error('Phone command outcome is unknown; it will not be retried automatically')); }, 5000);
       this.commands.set(id, { resolve, reject, timer });
       this.sendApp({ type: 'command', id, name, args });
     });
@@ -210,7 +223,7 @@ export class VoiceSession {
   private onTaskStatus(status: TaskStatus) {
     console.log('Phone task:', status.state, 'revision:', status.revision);
     this.sendApp(status);
-    if (status.state === 'completed' || status.state === 'blocked') {
+    if (status.state === 'completed' || status.state === 'blocked' || status.state === 'unknown') {
       this.pendingAnnouncement = status;
       this.announceWhenIdle();
     }
