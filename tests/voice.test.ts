@@ -69,7 +69,7 @@ test('late argument events from an interrupted response cannot attach to a new r
 
 test('blocked Settings announcement gives the recovery instruction without a generic greeting', () => {
   const event = completionResponse({ type: 'task', state: 'blocked', goal: 'Turn Night Light on', detail: "I couldn't open Settings. Open Display settings, then say continue.", revision: 5 });
-  assert.match(event.response.instructions, /Say exactly this task feedback/);
+  assert.match(event.response.instructions, /Tell the user this task feedback in their language/);
   assert.match(event.response.instructions, /Open Display settings, then say continue/);
   assert.match(event.response.instructions, /Do not greet/);
 });
@@ -188,8 +188,8 @@ test('a preset changes manner and pacing while the shared phone rules stay in ev
   assert.equal(parsePreset('family'), 'family');
   assert.equal(parsePreset('unknown'), 'quick');
   assert.ok(family.audio.input.turn_detection.silence_duration_ms > bosonSessionConfiguration().audio.input.turn_detection.silence_duration_ms);
-  assert.match(family.instructions, /same natural mix/);
+  assert.match(family.instructions, /Always speak Hindi/);
   const update = completionResponse({ type: 'task', state: 'question', goal: 'Send a photo', detail: 'Which photo?', revision: 1 }, presetInstructions(presets.family));
-  assert.match(update.response.instructions, /same natural mix/);
+  assert.match(update.response.instructions, /Always speak Hindi/);
   assert.match(update.response.instructions, /Do not describe an action as completed until/);
 });

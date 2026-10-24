@@ -58,7 +58,8 @@ const googleMessages: AppCapability = {
     if (element.editable && id === 'ContactSearchField') return { kind: 'enter', field: 'recipient' };
     if (element.editable && id === 'compose_message_text') return { kind: 'enter', field: 'message' };
     if (!element.clickable) return undefined;
-    if (id === 'Compose:Draft:Send') return /^Send (SMS|MMS|message)$/i.test(element.text) ? { kind: 'send_message' } : undefined;
+    // Labeled "Send SMS", "Send RCS message", "Send encrypted message" and so on by transport.
+    if (id === 'Compose:Draft:Send') return /^Send\b/i.test(element.text) ? { kind: 'send_message' } : undefined;
     // Rows carry contact_row IDs before a search; search suggestions are unlabeled rows reading "Name | (555) 010-0001 · Mobile".
     const [name, number] = element.text.split(' | ');
     if (picking && name && (id.startsWith('contact_row') || (!id && number && /^[+(]?\d[\d\s().-]{6,}/.test(number)))) return { kind: 'pick_contact', name };
