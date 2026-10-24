@@ -1,0 +1,14 @@
+# One-click controller for judges: https://render.com/deploy?repo=https://github.com/Ron-it/boson-hack-26
+services:
+  - type: web
+    name: tandem-controller
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: BOSON_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: DEVICE_TOKEN
+        generateValue: true

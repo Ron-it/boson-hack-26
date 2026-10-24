@@ -1,119 +1,131 @@
-# Tandem
+<img src="docs/brand/hero.png" alt="Tandem: say what you need. It does it with you, or shows you how." width="100%">
 
-Talk to your phone and it does the task with you. Tandem is an Android voice
-assistant for people who know what they want but get lost in apps. You say the
-goal in your own words ("text Avery I'm running late", "make the screen
-brighter", "what does this button do?"), and Tandem operates the phone while it
-talks you through it. Ask "show me how" and it guides you instead of acting.
-Interrupt at any time to correct it, pause it, or take over.
-
-<p>
-  <img src="docs/brand/home.png" alt="Tandem home screen" width="240">
-  <img src="docs/brand/settings.png" alt="Tandem pairing and settings" width="240">
+<p align="center">
+  <a href="https://github.com/Ron-it/boson-hack-26/releases/latest/download/tandem.apk"><b>Download the APK</b></a>
+  &nbsp;·&nbsp;
+  <a href="#quickstart">Quickstart</a>
+  &nbsp;·&nbsp;
+  <a href="#how-higgs-audio-is-used">Higgs Audio</a>
+  &nbsp;·&nbsp;
+  <a href="#known-limitations">Limitations</a>
 </p>
+
+Tandem is an Android voice assistant for people who know what they want but get
+lost in apps. Say the goal in your own words and Tandem operates the phone while
+it talks you through it. Ask "show me how" and it guides you instead. Talk over
+it anytime to correct it, pause it, or take over.
+
+<img src="docs/brand/how-it-works.png" alt="How a request runs: you speak, Higgs Realtime hears and decides, the operator picks the next tap, your phone taps and checks." width="100%">
 
 ## How Higgs Audio is used
 
-| Model | Role |
+| | |
 | --- | --- |
-| `higgs-realtime-1.5-preview` | The whole conversation: hears the user, speaks back, and decides when to act through tool calls (`update_phone_task`, `look_at_screen`, `confirm_phone_action`, `set_help_mode`, `pause_phone_task`, `stop_phone_task`, `quick_phone_action`). |
-| `higgs-stt-3.1` | Input transcription, used to check that confirmations ("yes, send it") came from the user's own words. |
-| Higgs voice cloning | Family mode speaks in a cloned voice. For the demo we recorded Ronit speaking Hindi, created a custom voice through Boson's voice API, and set it as the Family preset's voice, so a parent or grandparent hears help in their own family member's voice. |
-| Higgs voices | Three presets: **Quick** (fast turn-taking), **Family** (warm, slower, always Hindi, in the cloned voice), **Hands-free** (never asks the user to touch the screen). |
+| **Higgs Realtime 1.5** <br><sub>`higgs-realtime-1.5-preview`</sub> | The whole conversation in one session. It hears you, speaks back, and drives the phone through eight tools: start or correct a task, look at the screen, confirm, guide mode, pause, continue, stop, and instant actions. |
+| **Higgs STT 3.1** <br><sub>`higgs-stt-3.1`</sub> | Transcribes your words so a "yes, send it" only counts if you actually said it. |
+| **Voice cloning** | Family mode speaks Hindi in a cloned voice. We recorded Ronit, created a custom voice with Boson's voice API, and made it the Family voice, so a parent hears help in their own child's voice. |
+| **Voice presets** | **Quick** for fast turn-taking. **Family** is warm, slower, always Hindi. **Hands-free** never asks you to touch the screen. |
 
-Speech onset cancels in-flight phone work, flushes playback, and the corrected
-goal replaces the old one. Sending, paying, deleting and other irreversible taps
-are always asked aloud first.
+Your voice interrupts everything: speech cancels in-flight phone work, flushes
+playback, and the corrected goal replaces the old one. Sending, paying and
+deleting are always asked aloud first.
 
-## Architecture
+## Quickstart
 
-```text
-Tandem app (Expo + Kotlin foreground service: mic, speaker, rim overlay)
-        ↕ authenticated WSS, PCM16 24 kHz
-Node controller on Railway ↔ Higgs Realtime 1.5 preview
-        ↕ each UI step chosen by GPT-6.1 Sol from the live accessibility tree
-Mobilerun Portal (outbound WSS) → Android accessibility taps, typing, scrolling
-```
+You need an Android phone (Android 12+), a [Boson API key](https://docs.boson.ai)
+and an OpenAI API key. About ten minutes.
 
-- Instant actions (home, back, open app, open link) go straight to Portal with no model call.
-- Timers, alarms, exact volume and brightness use the app's native module.
-- Everything else reads the screen and acts step by step, verifying the result
-  (a Google Messages send checks for the sent bubble).
+**1. Deploy your controller**
 
-Code map: `mobile/` is the app, `mobile/modules/boson-audio/` the native audio and
-overlay module, `src/server/` the controller (`voice.ts` is the Higgs session),
-`src/mobile/` the Portal client and phone operator.
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Ron-it/boson-hack-26)
 
-## Running it
+Paste your two API keys. Render generates the `DEVICE_TOKEN` pairing code; copy
+it from the service's Environment tab along with the service URL.
 
-You need an Android phone (tested on a Pixel 10, Android 17), a Boson API key,
-and an OpenAI API key. Node 24 or newer.
+**2. Install two apps on the phone**
 
-**Controller**
+- [Tandem APK](https://github.com/Ron-it/boson-hack-26/releases/latest/download/tandem.apk) (allow installs from your browser when asked)
+- [Mobilerun Portal APK](https://github.com/droidrun/mobilerun-portal/releases), which lets Tandem tap and type
+
+**3. Pair**
+
+| Portal | Tandem |
+| --- | --- |
+| Turn on its accessibility service. In **Settings → Reverse Connection**, set the host to `wss://<your-service>.onrender.com/device`, paste the token, and turn on **Connect to Host**. | Tap **Pair this phone**, enter `https://<your-service>.onrender.com` and the same token. Optionally allow brightness control and drawing over other apps. |
+
+**4. Talk**
+
+Pick a voice, tap **Start talking**, and try:
+
+> "Set brightness to 70% and turn on Night Light." … "Actually, leave Night Light off."<br>
+> "Text Maya that I'm running late."<br>
+> "Set a timer for ten minutes."<br>
+> "What is this screen asking me?"<br>
+> "Show me how to turn on Wi-Fi."
+
+<p>
+  <img src="docs/brand/home.png" alt="Tandem home" width="49%">
+  <img src="docs/brand/settings.png" alt="Pairing" width="49%">
+</p>
+
+<details>
+<summary><b>Run the controller locally or build the APK yourself</b></summary>
 
 ```sh
-cp .env.example .env   # fill BOSON_API_KEY, OPENAI_API_KEY, DEVICE_TOKEN (random, 24+ chars)
+cp .env.example .env   # BOSON_API_KEY, OPENAI_API_KEY, DEVICE_TOKEN (random, 24+ chars)
 npm install
-npm start              # listens on PORT, default 3000
+npm start              # PORT, default 3000. GET /health shows if the phone is connected
 ```
 
-Deploy it anywhere with a public HTTPS URL (the `Dockerfile` is what runs on
-Railway). `GET /health` reports whether the phone is connected. Optional:
-`FAMILY_VOICE=voice_<id>` sets a cloned Higgs voice for the Family preset.
-`bash scripts/family-voice.sh` walks through recording Hindi, cloning it with
-Boson, and saving the voice ID.
+Expose it over HTTPS (any tunnel or host works; the `Dockerfile` is what we run).
+`npm run voice:check` runs a synthetic Higgs session without a phone.
+`npm test` and `npm run typecheck` run the controller checks.
 
-**Phone**
+Your own Family voice: `bash scripts/family-voice.sh` records Hindi, clones it with
+Boson and saves `FAMILY_VOICE=voice_<id>`. Set the same variable on your controller.
 
-1. Install the [Mobilerun Portal APK](https://github.com/droidrun/mobilerun-portal/releases),
-   enable its accessibility service, and point its Custom Connection at
-   `wss://<your-server>/device` with your `DEVICE_TOKEN`.
-2. Build and install Tandem (needs JDK 17 and the Android SDK; Expo Go does not work):
+Build the APK (JDK 17 and the Android SDK; Expo Go does not work):
 
-   ```sh
-   npm --prefix mobile ci
-   cd mobile
-   npx expo prebuild --platform android --no-install
-   ./android/gradlew -p android assembleRelease -PreactNativeArchitectures=arm64-v8a
-   adb install android/app/build/outputs/apk/release/app-release.apk
-   ```
+```sh
+npm --prefix mobile ci
+cd mobile
+npx expo prebuild --platform android --no-install
+./android/gradlew -p android assembleRelease -PreactNativeArchitectures=arm64-v8a
+```
 
-3. Open Tandem, tap **Pair this phone**, and enter the server URL and `DEVICE_TOKEN`.
-   Optionally allow brightness control and drawing over other apps.
-4. Pick a preset, tap **Start talking**, and speak.
+</details>
 
-**Without a phone**: `npm run voice:check` runs a synthetic Higgs session with a
-tool round trip and spoken completion. `npm test` and `npm run typecheck` run
-the controller checks.
+## Under the hood
 
-## Example requests
+```text
+Tandem app      Expo screen + Kotlin foreground service (mic, speaker, rim overlay)
+    ↕           authenticated WSS, PCM16 24 kHz
+Controller      Node, holds the Higgs Realtime session and the API keys
+    ↕           each step chosen by GPT-6.1 Sol from the live accessibility tree
+Portal          Android accessibility: tap, type, scroll, read the screen
+```
 
-- "Set brightness to 70% and turn on Night Light." Then mid-task: "Actually, leave Night Light off."
-- "Text Avery that I'm running late." Tandem reads the draft back and asks before sending.
-- "Set a timer for ten minutes."
-- "What is this screen asking me?" (reads the current app without changing it)
-- "Show me how to turn on Wi-Fi." (guide mode: it explains, you tap)
+Instant actions (home, back, open an app or link) skip the model. Timers, alarms,
+exact volume and brightness go through Tandem's native module. Everything else
+reads the screen, acts, and verifies: a sent message is only done when its bubble
+shows as sent.
+
+`mobile/` app · `mobile/modules/boson-audio/` native audio and overlay ·
+`src/server/` controller (`voice.ts` is the Higgs session) · `src/mobile/` Portal
+client and operator
 
 ## Known limitations
 
-- One phone and one voice session per controller. No accounts or durable task storage.
-- A controller redeploy drops the active voice session; restart it from the phone.
-- Speaker echo cancellation depends on the device. A headset is more reliable.
-- Some apps expose few accessibility labels; Tandem then falls back to a
-  screenshot and may be slower or refuse coordinate taps.
-- Automatic pause when the user touches the screen is not built. Say "pause" first.
-- The release APK is signed with Expo's development certificate. It is a hackathon build.
-
-## Project record
-
-[Product](PRODUCT.md) · [Design](DESIGN.md) · [Glossary](GLOSSARY.md) ·
-[Runtime](docs/runtime.md) · [Decisions](docs/decisions.md) · [ADRs](docs/adr/) ·
-[Model comparison](docs/model-comparison.md) · [Research](docs/research.md)
+- One phone and one voice session per controller. No accounts or task history.
+- Render's free plan sleeps when idle; the first connection can take a minute.
+- A controller redeploy ends the voice session. Start again from the phone.
+- Speaker echo cancellation varies by phone. Headphones work best.
+- Apps with few accessibility labels are slower; Tandem falls back to a screenshot.
+- Touching the screen does not pause Tandem yet. Say "pause" first.
+- The APK is signed with a development certificate. It is a hackathon build.
 
 ## Team
 
-- Ronit Buti ([@Ron-it](https://github.com/Ron-it))
-- Arut
-- Aryan
-- Atharva
-- Prakhar
+Ronit Buti ([@Ron-it](https://github.com/Ron-it)) · Arut · Aryan · Atharva · Prakhar
+
+<sub>Project record: [product](PRODUCT.md) · [design](DESIGN.md) · [glossary](GLOSSARY.md) · [runtime](docs/runtime.md) · [decisions](docs/decisions.md) · [ADRs](docs/adr/) · [model comparison](docs/model-comparison.md) · [research](docs/research.md)</sub>
