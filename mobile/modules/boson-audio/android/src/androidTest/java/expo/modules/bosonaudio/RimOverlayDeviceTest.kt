@@ -57,7 +57,7 @@ class RimOverlayDeviceTest {
     // Idle breathes on a ~4 s cycle; half a cycle later the rim is at the other end of its breath.
     Thread.sleep(1200)
     capture("01b-ready-breath", overlay)
-    overlay.update { speechStarted() }
+    overlay.update { speechStarted(); userTranscriptDelta("Turn on Night Light") }
     capture("02-listening", overlay, Level.MIC)
 
     // Touches reach Clock through the overlay.
@@ -71,10 +71,16 @@ class RimOverlayDeviceTest {
 
     overlay.update { userTranscript("Turn on Night Light and dim the screen", it) }
     capture("04-thinking", overlay)
-    overlay.update { voiceResponse(voice("generating", 1), it); task(task("working", 2, "Opening Display settings")); transcript("r1", "On it.", append = false); playback("r1", it) }
+    overlay.update { voiceResponse(voice("generating", 1), it); task(task("working", 2, "Opening Display settings")); transcript("r1", "On it. ", append = false); playback("r1", it) }
     capture("05-speaking-while-working", overlay, Level.PLAYBACK)
+    // A reply longer than the caption streams in word by word and keeps its newest words in view.
+    val reply = "I'm opening Display settings now. Night Light is under Display, and I'll switch it on, then lower the brightness to about forty percent so the screen is easier on your eyes tonight."
+    reply.split(" ").forEach { word -> overlay.update { transcript("r1", "$word ", append = true) }; Thread.sleep(70) }
+    capture("05b-long-reply", overlay, Level.PLAYBACK)
     overlay.update { playback(null, it); voiceResponse(voice("finished", 1), it) }
-    capture("06-working-after-reply", overlay)
+    capture("06-reply-lingers", overlay)
+    Thread.sleep(OverlayModel.REPLY_LINGER_MS)
+    capture("06b-working-after-reply", overlay)
     overlay.update { task(task("confirming", 3, "Send \"Running 10 minutes late\" to Maya in Messages?")) }
     capture("07-confirming", overlay)
     overlay.update { task(task("paused", 4, "Paused for manual control. Say continue when ready.")) }

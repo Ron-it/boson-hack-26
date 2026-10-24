@@ -70,6 +70,23 @@ class OverlayModelTest {
     assertEquals("", model.frame(0).note)
   }
 
+  @Test fun `a finished reply stays readable under what the user said, then clears`() {
+    val model = listening()
+    model.speechStarted()
+    model.userTranscriptDelta("turn on ")
+    assertEquals("turn on", model.frame(0).line)
+    model.userTranscript("turn on night light", 100)
+    model.voiceResponse(voice("generating", 1), 100)
+    model.transcript("r1", "Night Light is on.", append = false)
+    model.playback("r1", 200)
+    // A playback gap mid-reply, with the response still generating, keeps the reply up rather than flashing Thinking.
+    model.playback(null, 1_000)
+    assertEquals(Triple(Tone.AGENT, "Night Light is on.", "turn on night light"), model.frame(1_000).let { Triple(it.tone, it.line, it.heard) })
+    model.voiceResponse(voice("finished", 1), 1_200)
+    assertEquals(Tone.AGENT, model.frame(1_000 + OverlayModel.REPLY_LINGER_MS - 1).tone)
+    assertEquals(Tone.READY, model.frame(1_000 + OverlayModel.REPLY_LINGER_MS).tone)
+  }
+
   @Test fun `thinking after the user stops is bounded`() {
     val model = listening()
     model.speechStarted()

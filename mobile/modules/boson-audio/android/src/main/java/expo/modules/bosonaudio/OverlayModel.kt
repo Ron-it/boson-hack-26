@@ -17,6 +17,8 @@ data class OverlayFrame(
   val line: String = "",
   /** A second, concise detail; only used when an issue must stay visible beside pending work. */
   val note: String = "",
+  /** What the user last said, kept above Boson's reply so the exchange reads as one turn. */
+  val heard: String = "",
   /** When the frame changes without a new event, e.g. the post-speech thinking window closing. */
   val revalidateAt: Long? = null,
 ) {
@@ -45,6 +47,9 @@ class OverlayModel {
   private var reading = false
   private val transcripts = LinkedHashMap<String, String>()
   private var playing: String? = null
+  /** The reply that just finished playing stays readable until [Reply.until]. */
+  private data class Reply(val id: String, val until: Long)
+  private var reply: Reply? = null
   /** Shown while idle after a resolved task, until the user speaks again. */
   private var result: Task? = null
 
@@ -55,6 +60,7 @@ class OverlayModel {
     userTurnEndedAt = null
     userText = ""
     result = null
+    reply = null
   }
 
   /** The user's turn ended: transcript, response generation, or playback proves it. */
@@ -63,6 +69,9 @@ class OverlayModel {
   }
 
   fun userTranscript(text: String, now: Long) { userText = text.trim(); endUserTurn(now) }
+
+  /** Partial transcription, when the voice model streams it; the completed transcript replaces it. */
+  fun userTranscriptDelta(text: String) { userText += text }
 
   fun reading(active: Boolean) { reading = active }
 
@@ -73,7 +82,10 @@ class OverlayModel {
 
   /** From the speaker thread: the response whose PCM is actually being written, or null when silent. */
   fun playback(responseId: String?, now: Long) {
-    if (responseId != null) endUserTurn(now)
+    if (responseId != null) {
+      // An audible reply answers the turn, so the post-speech thinking window no longer applies.
+      userSpeaking = false; userTurnEndedAt = null; reply = null
+    } else playing?.let { reply = Reply(it, now + REPLY_LINGER_MS) }
     playing = responseId
   }
 
@@ -128,13 +140,20 @@ class OverlayModel {
     val pending = task?.let { taskLabel(it.state) }
     fun live(label: String) = if (pending == null) label else "$label · $pending"
 
-    playing?.let { return OverlayFrame(Tone.AGENT, Level.PLAYBACK, live("Boson"), transcripts[it].orEmpty().trim()) }
-    if (userSpeaking) return OverlayFrame(Tone.USER, Level.MIC, live("Listening"))
+    fun said(id: String, level: Level, until: Long? = null) =
+      OverlayFrame(Tone.AGENT, level, live("Boson"), transcripts[id].orEmpty().trim(), heard = userText.trim(), revalidateAt = until)
+
+    playing?.let { return said(it, Level.PLAYBACK) }
+    if (userSpeaking) return OverlayFrame(Tone.USER, Level.MIC, live("Listening"), userText.trim())
+    // A buffer underrun or the server's late "finished" must not flash Thinking between two halves of one reply.
+    val lingering = reply?.takeIf { now < it.until && !transcripts[it.id].isNullOrBlank() }
     val thinkingUntil = userTurnEndedAt?.plus(THINKING_GRACE_MS)
-    if (reading || generating.isNotEmpty() || anonymousGenerating || (thinkingUntil != null && now < thinkingUntil)) {
-      return OverlayFrame(Tone.BUSY, Level.NONE, live(if (reading) "Reading screen" else "Thinking"), userText,
-        revalidateAt = thinkingUntil?.takeIf { now < it && !reading && generating.isEmpty() && !anonymousGenerating })
+    val generatingOther = generating.any { it != lingering?.id } || anonymousGenerating
+    if (reading || generatingOther || (thinkingUntil != null && now < thinkingUntil)) {
+      return OverlayFrame(Tone.BUSY, Level.NONE, live(if (reading) "Reading screen" else "Thinking"), userText.trim(),
+        revalidateAt = thinkingUntil?.takeIf { now < it && !reading && !generatingOther })
     }
+    lingering?.let { return said(it.id, Level.NONE, it.until) }
     val issue = issue
     task?.let { pendingTask ->
       val tone = when (pendingTask.state) { "working" -> Tone.ACTING; "paused" -> Tone.PAUSED; else -> Tone.ATTENTION }
@@ -161,5 +180,8 @@ class OverlayModel {
   private fun pausedDetail(task: Task) =
     if (task.state == "paused" && !task.detail.contains("continue", ignoreCase = true)) "Say continue to resume." else task.detail
 
-  companion object { const val THINKING_GRACE_MS = 4_000L }
+  companion object {
+    const val THINKING_GRACE_MS = 4_000L
+    const val REPLY_LINGER_MS = 8_000L
+  }
 }

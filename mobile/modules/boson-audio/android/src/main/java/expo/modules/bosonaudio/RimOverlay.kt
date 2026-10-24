@@ -19,6 +19,7 @@ import android.view.RoundedCorner
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
+import android.view.animation.PathInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -41,6 +42,8 @@ class RimOverlay(private val context: Context) {
   private val windows = context.getSystemService(WindowManager::class.java)
   private var root: FrameLayout? = null
   private var glow: GlowView? = null
+  private var caption: LinearLayout? = null
+  private var heard: TextView? = null
   private var label: TextView? = null
   private var line: TextView? = null
   private var note: TextView? = null
@@ -92,22 +95,52 @@ class RimOverlay(private val context: Context) {
 
   private fun render() {
     val now = SystemClock.uptimeMillis()
+    val previous = frame
     frame = model.frame(now)
     main.removeCallbacks(revalidate)
     frame.revalidateAt?.let { main.postAtTime(revalidate, it) }
     val glow = glow ?: return
+    val caption = caption!!; val heard = heard!!; val label = label!!; val line = line!!; val note = note!!
     glow.show(frame)
-    label!!.text = frame.label
-    label!!.setTextColor(toneColor(frame.tone))
-    line!!.text = frame.line
-    line!!.visibility = if (frame.line.isEmpty()) View.GONE else View.VISIBLE
-    // Transcripts stay on one line; an actionable issue may need a second.
-    line!!.maxLines = if (frame.tone == Tone.FAILED || frame.tone == Tone.UNCERTAIN || frame.tone == Tone.ATTENTION) 2 else 1
-    line!!.ellipsize = if (frame.level == Level.NONE) TextUtils.TruncateAt.END else TextUtils.TruncateAt.START
-    note!!.text = frame.note
-    note!!.visibility = if (frame.note.isEmpty()) View.GONE else View.VISIBLE
-    (label!!.parent as View).visibility = if (frame.captioned) View.VISIBLE else View.GONE
+    // A caption fading out still counts as gone, so a quick return enters again instead of vanishing.
+    val appearing = frame.captioned && (caption.visibility != View.VISIBLE || !previous.captioned)
+    if (appearing) {
+      caption.animate().cancel()
+      caption.visibility = View.VISIBLE
+      caption.alpha = 0f; caption.translationY = 16 * density
+      caption.animate().alpha(1f).translationY(0f).setDuration(320).setInterpolator(EASE_OUT)
+    } else if (!frame.captioned && previous.captioned) {
+      caption.animate().cancel()
+      caption.animate().alpha(0f).translationY(8 * density).setDuration(180).setInterpolator(EASE_OUT).withEndAction { caption.visibility = View.GONE }
+    }
+    if (!frame.captioned) return
+
+    show(heard, if (frame.heard.isEmpty()) "" else "\u201C${frame.heard}\u201D", fresh = !appearing && frame.heard != previous.heard)
+    show(label, frame.label, fresh = !appearing && frame.label != previous.label, rise = 0f)
+    label.setTextColor(toneColor(frame.tone))
+    // Live speech follows its newest words; task details and recovery steps read from the start.
+    val spoken = frame.tone == Tone.USER || frame.tone == Tone.AGENT || frame.tone == Tone.BUSY
+    line.maxLines = 4
+    line.ellipsize = if (spoken) null else TextUtils.TruncateAt.END
+    line.gravity = if (spoken) Gravity.BOTTOM or Gravity.START else Gravity.TOP or Gravity.START
+    line.isVerticalFadingEdgeEnabled = spoken
+    if (!spoken) line.scrollTo(0, 0)
+    // Streaming text extends the line; anything else is a new sentence and enters on its own.
+    show(line, frame.line, fresh = !appearing && frame.line != previous.line && !frame.line.startsWith(previous.line.ifEmpty { "\u0000" }))
+    show(note, frame.note, fresh = !appearing && frame.note != previous.note)
   }
+
+  /** Sets a caption row; a fresh value fades in with a short rise, from text that is already in place. */
+  private fun show(view: TextView, value: String, fresh: Boolean, rise: Float = 6f) {
+    view.text = value
+    view.visibility = if (value.isEmpty()) View.GONE else View.VISIBLE
+    if (!fresh || value.isEmpty()) return
+    view.animate().cancel()
+    view.alpha = 0.2f; view.translationY = rise * density
+    view.animate().alpha(1f).translationY(0f).setDuration(260).setInterpolator(EASE_OUT)
+  }
+
+  private val density get() = context.resources.displayMetrics.density
 
   private fun attachOrDetach() {
     val wanted = active && resumedActivities == 0 && Settings.canDrawOverlays(context)
@@ -121,10 +154,21 @@ class RimOverlay(private val context: Context) {
     val label = text(11f, Color.WHITE).apply { isAllCaps = true; letterSpacing = 0.08f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setLineHeight(TypedValue.COMPLEX_UNIT_SP, 16f) }
     val line = text(19f, Color.parseColor("#EFF0F0")).apply { typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); letterSpacing = -0.01f; setLineHeight(TypedValue.COMPLEX_UNIT_SP, 26f) }
     val note = text(14f, toneColor(Tone.FAILED)).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setLineHeight(TypedValue.COMPLEX_UNIT_SP, 20f) }
+    val heard = text(15f, Color.parseColor("#B7C7BE")).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END; setLineHeight(TypedValue.COMPLEX_UNIT_SP, 21f) }
+    line.setFadingEdgeLength((22 * density).toInt())
+    // Every added line slides the block up instead of jumping it: the caption grows from the bottom, and
+    // a full line scrolls inside itself.
+    line.setOnScrollChangeListener { view, _, y, _, oldY -> if (y > oldY && view.isShown) glide(view, (y - oldY).toFloat()) }
     val caption = LinearLayout(context).apply {
       orientation = LinearLayout.VERTICAL
       accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+      visibility = View.GONE
+      addView(heard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = (12 * density).toInt() })
       addView(label); addView(line, LinearLayout.LayoutParams(-1, -2).apply { topMargin = (6 * density).toInt() }); addView(note, LinearLayout.LayoutParams(-1, -2).apply { topMargin = (4 * density).toInt() })
+      addOnLayoutChangeListener { view, _, top, _, bottom, _, oldTop, _, oldBottom ->
+        if (bottom == oldBottom && oldTop != 0 && top != oldTop && view.isShown && view.alpha == 1f) glide(view, (oldTop - top).toFloat())
+        glow.captionTop = top.toFloat(); glow.invalidate()
+      }
     }
     val captionParams = FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM)
     val root = FrameLayout(context).apply {
@@ -153,13 +197,19 @@ class RimOverlay(private val context: Context) {
     }
     glow.windowAlpha = params.alpha
     try { windows.addView(root, params) } catch (_: Exception) { return }
-    this.root = root; this.glow = glow; this.label = label; this.line = line; this.note = note
+    this.root = root; this.glow = glow; this.caption = caption; this.heard = heard; this.label = label; this.line = line; this.note = note
     render()
   }
 
   private fun detach() {
     try { windows.removeView(root) } catch (_: Exception) { }
-    root = null; glow = null; label = null; line = null; note = null
+    root = null; glow = null; caption = null; heard = null; label = null; line = null; note = null
+  }
+
+  /** Offsets a view by how far its content just jumped, then eases it home. */
+  private fun glide(view: View, by: Float) {
+    view.translationY += by
+    view.animate().translationY(0f).setDuration(240).setInterpolator(EASE_OUT)
   }
 
   /** Per-tone look, taken from the Rim A prototype's idle/listening/thinking/speaking/acting states. */
@@ -182,6 +232,8 @@ class RimOverlay(private val context: Context) {
     private var lastFrame = 0L
     /** Display corner radius in px, so the rim follows the real screen outline. */
     var cornerRadius = 0f
+    /** Where the caption block starts, so the scrim always sits behind every line it shows. */
+    var captionTop = Float.MAX_VALUE
     var windowAlpha = 1f
     private val motion get() = ValueAnimator.areAnimatorsEnabled()
 
@@ -228,7 +280,7 @@ class RimOverlay(private val context: Context) {
       val e = energy
 
       if (scrim > 0.01f) {
-        val top = h - 330 * density
+        val top = min(h - 330 * density, captionTop - 160 * density)
         paint.shader = LinearGradient(0f, top, 0f, h, intArrayOf(Color.TRANSPARENT, Color.argb((217 * scrim).toInt(), 13, 16, 18), Color.argb((242 * scrim).toInt(), 13, 16, 18)), floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
         canvas.drawRect(0f, top, w, h, paint)
       }
@@ -276,6 +328,8 @@ class RimOverlay(private val context: Context) {
   }
 
   companion object {
+    /** Exponential ease-out: quick to respond, soft to land. */
+    private val EASE_OUT = PathInterpolator(0.16f, 1f, 0.3f, 1f)
     private const val ACCENT = "#2BCB3A"
     private const val HOVER = "#50DE5D"
     private const val SOFT = "#8CC4A4"
