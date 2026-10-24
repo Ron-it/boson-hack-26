@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { completionResponse } from '../src/server/voice.ts';
+import { bosonSessionConfiguration, completionResponse, presetInstructions } from '../src/server/voice.ts';
+import { parsePreset, presets } from '../src/server/presets.ts';
 
 test('task completion uses a supported Boson response instruction instead of a rejected system message', () => {
   const event = completionResponse({ type: 'task', state: 'completed', goal: 'Leave Night Light off', detail: 'Observed Night Light OFF', revision: 2 });
@@ -305,4 +306,15 @@ test('a late old response completion cannot erase a new turn tool carried by arg
     await h.until(() => writes === 1 ? true : undefined, 'new turn tool', 500);
     assert.equal(writes, 1);
   } finally { await h.close(); }
+});
+
+test('a preset changes manner and pacing while the shared phone rules stay in every response', () => {
+  const family = bosonSessionConfiguration(presets.family);
+  assert.equal(parsePreset('family'), 'family');
+  assert.equal(parsePreset('unknown'), 'quick');
+  assert.ok(family.audio.input.turn_detection.silence_duration_ms > bosonSessionConfiguration().audio.input.turn_detection.silence_duration_ms);
+  assert.match(family.instructions, /same natural mix/);
+  const update = completionResponse({ type: 'task', state: 'question', goal: 'Send a photo', detail: 'Which photo?', revision: 1 }, presetInstructions(presets.family));
+  assert.match(update.response.instructions, /same natural mix/);
+  assert.match(update.response.instructions, /Do not describe an action as completed until/);
 });
