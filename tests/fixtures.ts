@@ -9,11 +9,11 @@ import type { createSelector } from '../src/mobile/selectors.ts';
 import { VoiceSession } from '../src/server/voice.ts';
 
 /** Answers one Portal request. Throwing becomes a Portal error reply. */
-export type Portal = (method: string, params: Record<string, unknown>) => unknown;
+export type Portal = (method: string, params: Record<string, unknown>) => unknown | Promise<unknown>;
 
 const outputSchema = z.object({ type: z.literal('conversation.item.create'), item: z.object({ call_id: z.string(), output: z.string() }) });
 
-export async function harness(portal: Portal, options: { describeScreen?: ScreenDescriber | null; selector?: Pick<ReturnType<typeof createSelector>, 'decide'> } = {}) {
+export async function harness(portal: Portal, options: { describeScreen?: ScreenDescriber | null; selector?: Pick<ReturnType<typeof createSelector>, 'decide'>; holdResponses?: boolean } = {}) {
   const server = new WebSocketServer({ port: 0 });
   await once(server, 'listening');
   const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -26,8 +26,9 @@ export async function harness(portal: Portal, options: { describeScreen?: Screen
   portalClient.on('message', data => {
     const request = z.object({ id: z.string(), method: z.string(), params: z.record(z.string(), z.unknown()) }).parse(JSON.parse(data.toString()));
     portalSeen.push(request.method);
-    try { portalClient.send(JSON.stringify({ id: request.id, status: 'success', result: JSON.stringify(portal(request.method, request.params)) })); }
-    catch (error) { portalClient.send(JSON.stringify({ id: request.id, status: 'error', error: error instanceof Error ? error.message : 'failed' })); }
+    Promise.resolve().then(() => portal(request.method, request.params)).then(
+      result => portalClient.send(JSON.stringify({ id: request.id, status: 'success', result: JSON.stringify(result) })),
+      (error: unknown) => portalClient.send(JSON.stringify({ id: request.id, status: 'error', error: error instanceof Error ? error.message : 'failed' })));
   });
   const device = new DeviceConnection(await deviceSide, 'test-phone');
 
@@ -39,16 +40,20 @@ export async function harness(portal: Portal, options: { describeScreen?: Screen
 
   const bosonSide = nextAccepted();
   const boson = new WebSocket(url);
+  const { holdResponses = false, ...adapters } = options;
   const session = new VoiceSession(appSocket, device, { BOSON_API_KEY: 'synthetic' }, {
     voiceSocket: await bosonSide,
     selector: { decide: async () => ({ actionId: 'blocked', confidence: null, returnedModel: null }) },
-    describeScreen: null, ...options,
+    describeScreen: null, ...adapters,
   });
   await once(boson, 'open');
   const outputs: { call_id: string; output: unknown }[] = [];
   /** Instructions of each response the server asked Boson to speak, such as a task announcement. */
   const announcements: string[] = [];
   let spoken = 0;
+  /** While held, responses the server starts stay in progress, as if Boson were still speaking them. */
+  let held: string[] | undefined = holdResponses ? [] : undefined;
+  const finish = (id: string) => boson.send(JSON.stringify({ type: 'response.done', response: { id, status: 'completed', output: [] } }));
   boson.on('message', data => {
     const event: unknown = JSON.parse(data.toString());
     const parsed = outputSchema.safeParse(event);
@@ -59,7 +64,7 @@ export async function harness(portal: Portal, options: { describeScreen?: Screen
       if (response.data.response) announcements.push(response.data.response.instructions);
       const id = `spoken_${++spoken}`;
       boson.send(JSON.stringify({ type: 'response.created', response: { id } }));
-      boson.send(JSON.stringify({ type: 'response.done', response: { id, status: 'completed', output: [] } }));
+      if (held) held.push(id); else finish(id);
     }
   });
 
@@ -91,8 +96,11 @@ export async function harness(portal: Portal, options: { describeScreen?: Screen
     throw new Error(`Timed out waiting for ${what}`);
   }
 
+  /** Boson finishes every held response and finishes later ones immediately. */
+  function releaseResponses() { const ids = held ?? []; held = undefined; ids.forEach(finish); }
+
   return {
-    call, speak, until, portalSeen, appEvents, announcements,
+    call, speak, until, releaseResponses, portalSeen, appEvents, announcements,
     async close() {
       session.close();
       for (const ws of [portalClient, appClient, boson, ...accepted]) ws.terminate();
@@ -122,80 +130,124 @@ function messagingView(overrides: Record<string, unknown> = {}) {
 
 const row = (top: number) => ({ left: 0, top, right: 1080, bottom: top + 150 });
 
-/** A synthetic Messages app shaped like the emulator's accessibility tree, with only test contacts. */
-export function messagesApp(options: { failSend?: boolean; sendLeavesDraft?: boolean; disconnectAfterSend?: boolean } = {}) {
-  let screen: 'home' | 'list' | 'pick' | 'conversation' = 'home';
+type Bubble = { recipient: string; text: string; from: 'me' | 'them'; status: 'sent' | 'sending' | 'failed' };
+
+/**
+ * A synthetic Messages app shaped like the emulator's Google Messages accessibility tree, with only test contacts.
+ * Resource IDs, labels and bubble descriptions mirror what Portal returned on emulator-5554.
+ */
+export function messagesApp(options: {
+  /** What a send tap does. Default: a new bubble that shows as sent. */
+  sendOutcome?: 'sent' | 'dropped' | 'sending' | 'failed' | 'throws';
+  /** Bubbles already in conversations, such as an earlier identical message. */
+  history?: Bubble[];
+  /** Extra clickable controls in the conversation, by label. */
+  extraControls?: string[];
+  /** Overrides the send button's label, to model a final control the operator does not understand. */
+  sendLabel?: string;
+  disconnectAfterSend?: boolean;
+  /** Held before state reads that follow a send, so a test can act while the operator awaits. */
+  readGate?: Promise<void>;
+  /** Held before the send tap resolves. */
+  tapGate?: Promise<void>;
+} = {}) {
+  let screen: 'home' | 'list' | 'pick' | 'conversation' | 'contacts' = 'home';
   let query = '';
   let recipient = '';
   let draft = '';
   let focused: 'search' | 'compose' | undefined;
   let disconnected = false;
-  const sent: { recipient: string; text: string }[] = [];
+  let heldReads = 0;
+  const bubbles: Bubble[] = [...options.history ?? []];
   const taps: string[] = [];
+  const sendAttempts = () => taps.filter(tap => tap === (options.sendLabel ?? 'Send SMS')).length;
 
   function tree() {
-    if (screen === 'home') return messagingView({ packageName: 'com.google.android.apps.nexuslauncher', children: [messagingView({ packageName: 'com.google.android.apps.nexuslauncher', text: 'Home', boundsInScreen: row(100) })] });
+    if (screen === 'home') return messagingView({ packageName: 'com.google.android.apps.nexuslauncher', children: [messagingView({ packageName: 'com.google.android.apps.nexuslauncher', text: 'Messages', isClickable: true, boundsInScreen: row(100) })] });
+    if (screen === 'contacts') return messagingView({ packageName: 'com.google.android.contacts', children: [
+      messagingView({ packageName: 'com.google.android.contacts', text: 'Delete contact', isClickable: true, boundsInScreen: row(100) }),
+      messagingView({ packageName: 'com.google.android.contacts', text: 'Avery Testcontact', isClickable: true, boundsInScreen: row(300) }),
+    ] });
     if (screen === 'list') return messagingView({ children: [
-      messagingView({ className: 'android.widget.Button', contentDescription: 'Search messages', isClickable: true, boundsInScreen: row(100) }),
-      messagingView({ className: 'android.widget.Button', text: 'Start chat', resourceId: `${messaging}:id/start_chat_fab`, isClickable: true, boundsInScreen: row(2000) }),
+      messagingView({ isClickable: true, boundsInScreen: row(100), children: [messagingView({ contentDescription: 'Search messages', boundsInScreen: row(100) })] }),
+      messagingView({ isClickable: true, boundsInScreen: row(2000), children: [messagingView({ text: 'Start chat', boundsInScreen: row(2000) })] }),
     ] });
     if (screen === 'pick') return messagingView({ children: [
-      messagingView({ className: 'android.widget.EditText', resourceId: 'ContactSearchField', text: query, isEditable: true, isClickable: true, boundsInScreen: row(100) }),
-      ...contacts.filter(contact => contact.name.toLowerCase().includes(query.toLowerCase())).map((contact, index) => messagingView({
-        resourceId: `contact_row_${index}`, isClickable: true, boundsInScreen: row(400 + index * 200),
-        children: [messagingView({ text: contact.name, boundsInScreen: row(400 + index * 200) }), messagingView({ text: contact.number, boundsInScreen: row(400 + index * 200) })],
-      })),
+      messagingView({ className: 'android.widget.EditText', resourceId: 'ContactSearchField', isEditable: true, isClickable: true, boundsInScreen: row(100),
+        children: query ? [] : [messagingView({ className: 'android.widget.TextView', text: 'Type name, phone number, or email', boundsInScreen: row(100) })], text: query }),
+      // Before a search, rows carry contact_row IDs; once a query is typed, suggestions are unlabeled rows in a list.
+      messagingView({ resourceId: query ? 'ContactSuggestionList' : 'contact_list', boundsInScreen: { left: 0, top: 400, right: 1080, bottom: 2000 }, children: contacts
+        .filter(contact => contact.name.toLowerCase().includes(query.toLowerCase())).map((contact, index) => messagingView({
+          resourceId: query ? '' : `contact_row_test_prefix_${index + 1}`, isClickable: true, boundsInScreen: row(400 + index * 200),
+          children: [messagingView({ text: contact.name, boundsInScreen: row(400 + index * 200) }), messagingView({ text: query ? `${contact.number} · Mobile` : contact.number, boundsInScreen: row(400 + index * 200) })],
+        })) }),
     ] });
+    const label = draft ? options.sendLabel ?? 'Send SMS' : 'Show record a voice message screen';
     return messagingView({ children: [
-      messagingView({ text: recipient, resourceId: `${messaging}:id/conversation_title`, boundsInScreen: row(100) }),
+      messagingView({ resourceId: 'top_app_bar', boundsInScreen: row(100), children: [messagingView({ className: 'android.widget.TextView', text: recipient, boundsInScreen: row(100) })] }),
+      ...bubbles.filter(bubble => bubble.recipient === recipient).map((bubble, index) => messagingView({
+        className: 'android.widget.TextView', resourceId: `${messaging}:id/message_text`, text: bubble.text, boundsInScreen: row(600 + index * 160),
+        contentDescription: `${bubble.from === 'me' ? 'You' : recipient} said  ${bubble.text} 2:38 AM ${bubble.status === 'sending' ? 'Sending' : bubble.status === 'failed' ? 'Not sent, tap to retry' : ''}.`,
+      })),
       // The emulator's Messages also names the recipient in the conversation banner.
-      messagingView({ text: `Texting with ${recipient.split(" ")[0]} (SMS/MMS)`, boundsInScreen: row(300) }),
-      ...sent.filter(item => item.recipient === recipient).map((item, index) => messagingView({ text: item.text, resourceId: `${messaging}:id/message_text`, boundsInScreen: row(600 + index * 160) })),
-      messagingView({ className: 'android.widget.EditText', resourceId: `${messaging}:id/compose_message_text`, text: draft, isEditable: true, isClickable: true, boundsInScreen: { left: 0, top: 2200, right: 900, bottom: 2350 } }),
-      messagingView({ className: 'android.widget.ImageButton', resourceId: `${messaging}:id/send_message_button`, contentDescription: 'Send SMS', isClickable: true, boundsInScreen: { left: 900, top: 2200, right: 1080, bottom: 2350 } }),
+      messagingView({ className: 'android.widget.TextView', resourceId: `${messaging}:id/message_text`, text: `Texting with ${recipient.split(' ')[0]} (SMS/MMS)`, boundsInScreen: row(400) }),
+      ...(options.extraControls ?? []).map((text, index) => messagingView({ isClickable: true, boundsInScreen: { left: 0, top: 2000 + index, right: 200, bottom: 2100 }, children: [messagingView({ contentDescription: text, boundsInScreen: { left: 0, top: 2000, right: 200, bottom: 2100 } })] })),
+      messagingView({ className: 'android.widget.EditText', resourceId: `${messaging}:id/compose_message_text`, text: draft || 'Text message', isEditable: true, isClickable: true, boundsInScreen: { left: 0, top: 2200, right: 900, bottom: 2350 } }),
+      messagingView({ resourceId: 'Compose:Draft:Send', isClickable: true, boundsInScreen: { left: 900, top: 2200, right: 1080, bottom: 2350 }, children: [messagingView({ contentDescription: label, boundsInScreen: { left: 900, top: 2200, right: 1080, bottom: 2350 } })] }),
     ] });
   }
 
   const raw = () => ({ a11y_tree: tree(), phone_state: { packageName: tree().packageName, activityName: screen } });
   const observe = () => parseObservation(raw());
-  function tap(x: number, y: number) {
+  async function state() {
+    if (sendAttempts() > 0 && options.readGate) { heldReads++; await options.readGate; }
+    if (disconnected) throw new Error('Phone is disconnected');
+    return observe();
+  }
+  async function tap(x: number, y: number) {
     const target = observe().elements.filter(element => element.clickable && x >= element.bounds.left && x < element.bounds.right && y >= element.bounds.top && y < element.bounds.bottom).at(-1);
-      taps.push(target?.text ?? 'nothing');
-      if (!target) return;
-      if (target.text === 'Start chat') { screen = 'pick'; focused = 'search'; }
-      else if (target.resourceId === 'ContactSearchField') focused = 'search';
-      else if (target.resourceId.endsWith('compose_message_text')) focused = 'compose';
-      else if (target.resourceId.startsWith('contact_row')) { recipient = target.text.split(' | ')[0] ?? ''; screen = 'conversation'; focused = 'compose'; }
-      else if (target.text === 'Send SMS') {
-        if (options.failSend) throw new Error('Synthetic disconnect after dispatch');
-        if (draft) { sent.push({ recipient, text: draft }); if (!options.sendLeavesDraft) draft = ''; }
-        if (options.disconnectAfterSend) disconnected = true;
-      }
+    taps.push(target?.text ?? 'nothing');
+    if (!target) return;
+    if (target.text === 'Start chat') { screen = 'pick'; focused = 'search'; }
+    else if (target.resourceId === 'ContactSearchField') focused = 'search';
+    else if (target.resourceId.endsWith('compose_message_text')) focused = 'compose';
+    else if (screen === 'pick' && target.text.includes(' | (555)')) { recipient = target.text.split(' | ')[0] ?? ''; screen = 'conversation'; focused = 'compose'; }
+    else if (target.resourceId === 'Compose:Draft:Send' && draft) {
+      if (options.tapGate) await options.tapGate;
+      const outcome = options.sendOutcome ?? 'sent';
+      if (outcome === 'throws') throw new Error('Synthetic disconnect after dispatch');
+      if (outcome !== 'dropped') bubbles.push({ recipient, text: draft, from: 'me', status: outcome });
+      draft = '';
+      if (options.disconnectAfterSend) disconnected = true;
+    }
   }
   function typeText(text: string) {
     if (focused === 'search') query = text;
     else if (focused === 'compose') draft = text;
     else throw new Error('No focused field');
   }
-  const launch = (packageName: string) => { if (packageName === messaging) screen = 'list'; };
+  const launch = (packageName: string) => {
+    if (packageName === messaging) screen = 'list';
+    if (packageName === 'com.google.android.contacts') screen = 'contacts';
+  };
   const packages = () => [{ packageName: messaging, label: 'Messages' }, { packageName: 'com.google.android.contacts', label: 'Contacts' }];
   const phone: PhoneControl = {
-    state: async () => { if (disconnected) throw new Error('Phone is disconnected'); return observe(); }, tap: async (x, y) => tap(x, y), typeText: async text => typeText(text),
+    state, tap, typeText: async text => typeText(text),
     launch: async packageName => launch(packageName), packages: async () => packages(),
     swipe: async () => {}, back: async () => {}, openSettings: async () => {},
   };
   /** The same app behind the Portal request protocol, for voice journeys. */
-  const portal: Portal = (method, params) => {
+  const portal: Portal = async (method, params) => {
     const number = (key: string) => z.number().parse(params[key]);
     switch (method) {
       case 'state': return raw();
-      case 'tap': return tap(number('x'), number('y')) ?? {};
-      case 'keyboard/input': return typeText(Buffer.from(z.string().parse(params.base64_text), 'base64').toString()) ?? {};
-      case 'app': return launch(z.string().parse(params.package)) ?? {};
+      case 'tap': await tap(number('x'), number('y')); return {};
+      case 'keyboard/input': typeText(Buffer.from(z.string().parse(params.base64_text), 'base64').toString()); return {};
+      case 'app': launch(z.string().parse(params.package)); return {};
       case 'packages': return packages();
       default: throw new Error(`Unexpected ${method}`);
     }
   };
-  return { phone, portal, sent, taps, edit: (text: string) => { draft = text; }, get draft() { return draft; } };
+  const sent = () => bubbles.filter(bubble => bubble.from === 'me' && !options.history?.includes(bubble)).map(({ recipient, text }) => ({ recipient, text }));
+  return { phone, portal, taps, sendAttempts, heldReads: () => heldReads, relabelSend: (label: string) => { options.sendLabel = label; }, get sent() { return sent(); }, edit: (text: string) => { draft = text; }, get draft() { return draft; } };
 }
-

@@ -78,6 +78,8 @@ function describeElement(node: UiNode, index: number, text: string, parent: numb
     className: node.className,
     role: node.className.slice(node.className.lastIndexOf('.') + 1),
     text: node.isPassword ? '[password field]' : text,
+    /** The node's own content description, such as a message bubble's sender and delivery state. */
+    description: node.isPassword ? '' : node.contentDescription,
     bounds: node.boundsInScreen,
     clickable: node.isClickable,
     enabled: node.isEnabled,

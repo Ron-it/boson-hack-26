@@ -4,9 +4,10 @@ import { actionCandidates, assertSettingsScreen, executeAction, readStableScreen
 import { z } from 'zod';
 import type { PhoneControl, PhoneObservation } from '../mobile/portal.ts';
 import { createSelector } from '../mobile/selectors.ts';
+import { capabilityFor, type Outgoing } from '../mobile/capabilities.ts';
 
 /** What the user is asked to approve. Approval applies once, to exactly this payload and request revision. */
-export type Proposal = { id: string; app: string; recipient: string; message: string };
+export type Proposal = { id: string; operation: 'send_message'; app: string; recipient: string; message: string };
 export type TaskStatus = { type: 'task'; state: 'paused' | 'working' | 'confirming' | 'question' | 'declined' | 'completed' | 'blocked' | 'unknown'; goal: string; detail: string; revision: number; proposal?: Proposal };
 
 const singleLine = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\r\n]*$/, 'Use a single line');
@@ -17,8 +18,12 @@ export const phoneRequestSchema = z.object({
 });
 export type PhoneRequest = z.infer<typeof phoneRequestSchema>;
 
-type PendingProposal = Proposal & { revision: number; packageName: string; control: { label: string; resourceId: string } };
-type Sent = { recipient: string; message: string };
+/** The exact control the user approved. Approval never transfers to another control or app. */
+type Target = { packageName: string; resourceId: string; label: string };
+type PendingProposal = Proposal & { revision: number; target: Target };
+type Counts = Record<Outgoing['status'], number>;
+/** A dispatched send, with the outgoing copies of its text that were already on screen just before the tap. */
+type Sent = { recipient: string; message: string; packageName: string; before: Counts };
 
 const segments = (text: string) => text.split(' | ').map(segment => segment.trim()).filter(Boolean);
 const contains = (text: string, query: string) => text.toLowerCase().includes(query.toLowerCase());
@@ -35,11 +40,22 @@ function recipientNames(observation: PhoneObservation, recipient: string) {
   return names.length ? names : matches;
 }
 
-/** The message appears outside the compose field, the field no longer holds it, and the recipient is still shown. */
-function sentEvidence(observation: PhoneObservation, sent: Sent) {
-  return observation.elements.some(element => !element.editable && element.text.includes(sent.message))
-    && !observation.elements.some(element => element.editable && element.text.trim() === sent.message)
-    && recipientNames(observation, sent.recipient).length > 0;
+/** Outgoing copies of the message by delivery state, or undefined when the app's sent messages are not understood. */
+function outgoingCounts(observation: PhoneObservation, message: string): Counts | undefined {
+  const outgoing = capabilityFor(observation)?.outgoing?.(observation);
+  if (!outgoing) return undefined;
+  const counts: Counts = { sent: 0, sending: 0, failed: 0 };
+  for (const item of outgoing) if (item.text.trim() === message) counts[item.status]++;
+  return counts;
+}
+
+/** A new outgoing copy beyond the pre-send baseline, in the same app and conversation. Earlier or incoming text is not evidence. */
+function sendResult(observation: PhoneObservation, sent: Sent): Outgoing['status'] | 'none' {
+  const counts = outgoingCounts(observation, sent.message);
+  if (!counts || observation.app.packageName !== sent.packageName || !recipientNames(observation, sent.recipient).includes(sent.recipient)) return 'none';
+  if (counts.sent > sent.before.sent) return 'sent';
+  if (counts.failed > sent.before.failed) return 'failed';
+  return counts.sending > sent.before.sending ? 'sending' : 'none';
 }
 export type NativeCommand = (...command: ['set_brightness', { percent: number }] | ['open_display' | 'read_brightness', Record<string, never>]) => Promise<unknown>;
 
@@ -179,10 +195,14 @@ export class PhoneTask {
       if (request.message && !request.recipient) { this.finish('question', 'Who should I send it to?', revision); return; }
       if (request.recipient && !request.message) { this.finish('question', `What should the message to ${request.recipient} say?`, revision); return; }
       if (request.message && !request.app) { this.finish('question', 'Which app should I send it with?', revision); return; }
+      // An earlier send with an unknown outcome is inspected before anything else, and never replayed.
       const unknown = this.execution.sendUnknown;
-      if (unknown && sentEvidence(first, unknown)) {
+      if (unknown && sendResult(first, unknown) === 'sent') {
         this.execution.sendUnknown = undefined;
-        this.finish('completed', `Checked first: ${JSON.stringify(unknown.message)} already shows as sent to ${unknown.recipient}. Not sent again.`, revision); return;
+        if (request.message === unknown.message && request.recipient && contains(unknown.recipient, request.recipient)) {
+          this.finish('completed', `Checked first: ${JSON.stringify(unknown.message)} already shows as sent to ${unknown.recipient}. Not sent again.`, revision); return;
+        }
+        this.emit({ type: 'task', state: 'working', goal, detail: `Your earlier message ${JSON.stringify(unknown.message)} to ${unknown.recipient} was sent.`, revision });
       }
     }
     let apps: { packageName: string; label: string }[] = [];
@@ -268,7 +288,7 @@ export class PhoneTask {
         this.finish('question', names.length > 1 ? `Which ${request.recipient} do you mean: ${names.slice(0, 3).join(' or ')}?` : `I'm not sure how to continue in ${app}. What should I do next?`, revision);
         return;
       }
-      if (candidate.action.type === 'commit') {
+      if (candidate.action.type === 'send') {
         if (this.propose(current, candidate.action, request, revision)) return;
         history.push('The requested message is not in the compose field yet. Type it before asking for approval.');
         previous = undefined;
@@ -278,7 +298,8 @@ export class PhoneTask {
       if (ambiguous) { this.finish('question', `Which ${request.recipient} do you mean: ${ambiguous.join(' or ')}?`, revision); return; }
       if (!settings && (candidate.action.type === 'done' || candidate.action.type === 'blocked')) {
         if (candidate.action.type === 'done' && !request.message) {
-          this.finish('completed', `Reported done on ${app}${current.app.activityName ? ` (${current.app.activityName})` : ''}. This is the assistant's reading of the screen, not an independent check.`, revision); return;
+          // No supported check establishes this outcome, so it is not reported as completed.
+          this.finish('unknown', `I stopped in ${app}, but I can't check that it's done. Please have a look.`, revision); return;
         }
         this.finish('blocked', request.message ? `Not sent. I stopped in ${app} before the confirmation step.` : `I can't continue in ${app}. Please take over.`, revision); return;
       }
@@ -318,13 +339,13 @@ export class PhoneTask {
   }
 
   /**
-   * Turns a consequential control into a proposal for the user. Returns false when the draft is not ready yet.
+   * Turns a supported send control into a proposal for the user. Returns false when the draft is not ready yet.
    * Without a concrete recipient and message there is nothing specific to confirm, so the user takes over instead.
    */
   private propose(observation: PhoneObservation, control: { label: string; resourceId: string }, request: PhoneRequest, revision: number) {
     const app = observation.app.currentApp;
     if (!request.recipient || !request.message) {
-      this.finish('blocked', `This step would tap ${JSON.stringify(control.label)} in ${app}. I only do steps like this after confirming a concrete recipient and message, so please do it yourself.`, revision);
+      this.finish('blocked', `I only send messages after confirming a concrete recipient and message, so please send this one yourself.`, revision);
       return true;
     }
     const message = request.message;
@@ -335,44 +356,54 @@ export class PhoneTask {
       this.finish('question', names.length ? `Which ${request.recipient} do you mean: ${names.slice(0, 3).join(' or ')}?` : `I can't see ${request.recipient} as the recipient here. Who exactly should get this?`, revision);
       return true;
     }
-    const proposal: PendingProposal = { id: randomUUID(), app, recipient, message, revision, packageName: observation.app.packageName, control };
+    const proposal: PendingProposal = { id: randomUUID(), operation: 'send_message', app, recipient, message, revision, target: { packageName: observation.app.packageName, ...control } };
     this.proposal = proposal;
     const warning = this.execution.sendUnknown ? ' An earlier send may already have gone through.' : '';
-    this.finish('confirming', `Send ${JSON.stringify(message)} to ${recipient} in ${app}?${warning}`, revision, { id: proposal.id, app, recipient, message });
+    this.finish('confirming', `Send ${JSON.stringify(message)} to ${recipient} in ${app}?${warning}`, revision, { id: proposal.id, operation: proposal.operation, app, recipient, message });
     return true;
   }
 
-  /** Dispatches an approved proposal once, after revalidating the live screen, and reports only observed results. */
+  /**
+   * Dispatches an approved send once, after revalidating the exact approved control on the live screen, and reports only
+   * observed results. After every await it reports only if this request still owns the phone; once the tap is
+   * dispatched, the unknown outcome stays recorded until a check establishes it.
+   */
   private async send(proposal: PendingProposal, revision: number, signal: AbortSignal) {
-    const check = () => { signal.throwIfAborted(); if (revision !== this.revision) throw new Error('Superseded request'); };
+    const owns = () => revision === this.revision && !signal.aborted;
     const current = await readStableScreen(this.phone, signal);
-    check();
-    const control = current.elements.find(element => element.clickable && element.enabled && element.text === proposal.control.label && element.resourceId === proposal.control.resourceId);
-    const unchanged = current.app.packageName === proposal.packageName && control
+    if (!owns()) return;
+    const { target } = proposal;
+    const control = current.elements.find(element => element.resourceId === target.resourceId && element.text === target.label
+      && capabilityFor(current)?.effect(element, current)?.kind === 'send_message');
+    const before = outgoingCounts(current, proposal.message);
+    const unchanged = current.app.packageName === target.packageName && control && before
       && current.elements.some(element => element.editable && element.text.trim() === proposal.message)
       && recipientNames(current, proposal.recipient).includes(proposal.recipient);
-    if (!unchanged) { this.finish('blocked', 'The draft or recipient changed after you confirmed, so nothing was sent. Say continue to prepare it again.', revision); return; }
-    const sent = { recipient: proposal.recipient, message: proposal.message };
+    if (!unchanged) { this.finish('blocked', 'The draft, recipient or send button changed after you confirmed, so nothing was sent. Say continue to prepare it again.', revision); return; }
+    const sent: Sent = { recipient: proposal.recipient, message: proposal.message, packageName: target.packageName, before };
     this.execution.sendUnknown = sent;
+    const lost = `The send to ${proposal.recipient} may or may not have gone through. I won't send it again; check the conversation.`;
     try { await this.phone.tap(center(control.bounds).x, center(control.bounds).y); }
-    catch { this.finish('unknown', `The send to ${proposal.recipient} may or may not have gone through. I won't send it again; check the conversation.`, revision); return; }
-    // From here the send has been dispatched; a failed check is an unknown outcome, never a reason to retry.
-    // An interruption leaves sendUnknown set, so the next run inspects before anything else.
-    try {
-      for (let attempt = 0; attempt < 8; attempt++) {
-        await delay(250, undefined, { signal });
-        if (sentEvidence(await this.phone.state(), sent)) {
-          this.execution.sendUnknown = undefined;
-          this.finish('completed', `Sent ${JSON.stringify(proposal.message)} to ${proposal.recipient}. It shows in the conversation.`, revision);
-          return;
-        }
+    catch { if (owns()) this.finish('unknown', lost, revision); return; }
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try { await delay(250, undefined, { signal }); }
+      catch { return; }
+      let observation: PhoneObservation;
+      try { observation = await this.phone.state(); }
+      catch { if (owns()) this.finish('unknown', lost, revision); return; }
+      if (!owns()) return;
+      const result = sendResult(observation, sent);
+      if (result === 'sent') {
+        this.execution.sendUnknown = undefined;
+        this.finish('completed', `Sent ${JSON.stringify(proposal.message)} to ${proposal.recipient}. It shows as sent in the conversation.`, revision);
+        return;
       }
-    } catch (error) {
-      if (signal.aborted) throw error;
-      this.finish('unknown', `I tapped send, but lost the phone before I could check it. The message to ${proposal.recipient} may have gone through. I won't send it again; check the conversation.`, revision);
-      return;
+      if (result === 'failed') {
+        this.finish('blocked', `${proposal.app} shows the message to ${proposal.recipient} as not sent. I won't retry it on my own.`, revision);
+        return;
+      }
     }
-    this.finish('unknown', `I tapped send, but the message doesn't show as sent to ${proposal.recipient}. I won't send it again; check the conversation.`, revision);
+    this.finish('unknown', `I tapped send, but the message doesn't show as sent to ${proposal.recipient} yet. I won't send it again; check the conversation.`, revision);
   }
 
   private finish(state: TaskStatus['state'], detail: string, revision: number, proposal?: Proposal) {

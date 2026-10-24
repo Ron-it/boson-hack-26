@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
+import { capabilityFor, type Effect } from './capabilities.ts';
 import type { PhoneControl, PhoneObservation } from './portal.ts';
 
 const actionSchema = z.discriminatedUnion('type', [
@@ -12,8 +13,8 @@ const actionSchema = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal('type'), x: z.number(), y: z.number(), field: z.enum(['recipient', 'message']), text: z.string() }),
   z.object({ type: z.literal('launch'), packageName: z.string() }),
-  // A consequential control. It is never dispatched here; only the operator's approval gate can tap it.
-  z.object({ type: z.literal('commit'), label: z.string(), resourceId: z.string() }),
+  // A supported send control. It is never dispatched here; only the operator's approval gate can tap it.
+  z.object({ type: z.literal('send'), label: z.string(), resourceId: z.string() }),
   z.object({ type: z.enum(['back', 'open_settings', 'wait', 'done', 'blocked', 'ask']) }),
 ]);
 
@@ -24,6 +25,7 @@ export type ActionCandidate = {
   description: string;
   action: z.infer<typeof actionSchema>;
   element?: Element;
+  effect?: Effect;
 };
 
 /** Values the operator may type. They come from the user's request, never from the model or the screen. */
@@ -31,19 +33,6 @@ export type CandidateContext = {
   request?: { recipient?: string | undefined; message?: string | undefined };
   apps?: { packageName: string; label: string }[];
 };
-
-const consequentialWords = /\b(send|submit|post|publish|share|buy|purchase|pay|order|checkout|book|subscribe|delete|remove|erase|discard|uninstall|install|transfer|call|dial|confirm|ok|yes|accept|agree)\b/i;
-
-/**
- * Short labels and IDs that name sending, submitting, buying, deleting or confirming.
- * This is a conservative guess, not a classifier of arbitrary apps: an unrecognized final control still slips through,
- * and long row labels are excluded because they carry message content rather than an action.
- */
-function consequential(element: Element) {
-  const id = element.resourceId.slice(element.resourceId.indexOf('/') + 1).replace(/[_-]/g, ' ');
-  const label = element.text.split(' | ')[0] ?? '';
-  return consequentialWords.test(id) || (label.split(/\s+/).length <= 4 && consequentialWords.test(label));
-}
 
 export function assertSettingsScreen(observation: PhoneObservation) {
   const settings = observation.rootPackage === 'com.android.settings';
@@ -79,8 +68,11 @@ export function actionCandidates(observation: PhoneObservation, context: Candida
   const candidates: ActionCandidate[] = [];
   // Without display geometry, coordinates cannot be validated; only non-positional actions remain.
   const screen = observation.screen;
-  if (screen) for (const element of observation.elements) {
-    if (!element.enabled) continue;
+  // Only controls whose effect is known for this app are offered; everything else is unknown and never dispatched.
+  const capability = capabilityFor(observation);
+  if (screen && capability) for (const element of observation.elements) {
+    const effect = capability.effect(element, observation);
+    if (!effect) continue;
     const left = Math.max(0, element.bounds.left);
     const right = Math.min(screen.width, element.bounds.right);
     const top = Math.max(0, element.bounds.top);
@@ -97,27 +89,31 @@ export function actionCandidates(observation: PhoneObservation, context: Candida
           action: { type: 'tap', x: Math.round(left + (right - left - 1) * percent / 100), y },
         });
       }
-    } else if (element.editable) {
-      for (const field of ['recipient', 'message'] as const) {
-        const text = context.request?.[field];
-        if (text) candidates.push({
-          id: `type_${element.index}_${field}`,
-          description: `Type the requested ${field} ${JSON.stringify(text)} into the ${element.text ? `field showing ${JSON.stringify(element.text)}` : `empty ${element.role}`}. Replaces its text; does not send.`,
-          action: { type: 'type', x, y, field, text }, element,
-        });
-      }
-    } else if (element.clickable && element.text && consequential(element)) {
-      candidates.push({
-        id: `approve_${element.index}`,
-        description: `Ask the user for approval to tap ${JSON.stringify(element.text)}. It may send, submit, buy, delete or confirm something, so it runs only after the user confirms.`,
-        action: { type: 'commit', label: element.text, resourceId: element.resourceId }, element,
+    } else if (effect.kind === 'enter') {
+      const text = context.request?.[effect.field];
+      if (text) candidates.push({
+        id: `type_${element.index}_${effect.field}`,
+        description: `Type the requested ${effect.field} ${JSON.stringify(text)} into the field showing ${JSON.stringify(element.text)}. Replaces its text; does not send.`,
+        action: { type: 'type', x, y, field: effect.field, text }, element, effect,
       });
-    } else if (element.clickable && element.text) {
+    } else if (effect.kind === 'send_message') {
+      candidates.push({
+        id: `send_${element.index}`,
+        description: `Ask the user for approval to send the requested message with ${JSON.stringify(element.text)}. It is sent only after they confirm.`,
+        action: { type: 'send', label: element.text, resourceId: element.resourceId }, element, effect,
+      });
+    } else if (effect.kind === 'pick_contact') {
+      // A contact is only offered when it matches the requested recipient; the operator never picks someone else.
+      const recipient = context.request?.recipient;
+      if (recipient && effect.name.toLowerCase().includes(recipient.toLowerCase())) candidates.push({
+        id: `tap_${element.index}`, description: `Tap ${JSON.stringify(element.text)}.`, action: { type: 'tap', x, y }, element, effect,
+      });
+    } else {
       const current = element.checked === null ? '' : ` Currently ${element.checked ? 'ON' : 'OFF'}.`;
       candidates.push({
         id: `tap_${element.index}`,
         description: `Tap ${JSON.stringify(element.text)}.${current}`,
-        action: { type: 'tap', x, y }, element,
+        action: { type: 'tap', x, y }, element, effect,
       });
     }
   }
@@ -125,7 +121,7 @@ export function actionCandidates(observation: PhoneObservation, context: Candida
     id: `launch_${index}`, description: `Open ${app.label}.`, action: { type: 'launch', packageName: app.packageName },
   }));
 
-  if (screen && observation.elements.some(element => element.scrollable)) {
+  if (screen && capability && observation.elements.some(element => element.scrollable)) {
     const x = Math.round(screen.width / 2);
     const upper = Math.round(screen.height * 0.3);
     const lower = Math.round(screen.height * 0.8);
@@ -157,7 +153,7 @@ export async function executeAction(portal: PhoneControl, candidate: ActionCandi
     case 'swipe': return portal.swipe(action.startX, action.startY, action.endX, action.endY);
     case 'type': await portal.tap(action.x, action.y); return portal.typeText(action.text);
     case 'launch': return portal.launch(action.packageName);
-    case 'commit': throw new Error('A consequential control needs the user\'s approval; nothing was tapped.');
+    case 'send': throw new Error('Sending needs the user\'s approval; nothing was tapped.');
     case 'back': return portal.back();
     case 'open_settings': return portal.openSettings();
     case 'wait': return new Promise<void>(resolve => setTimeout(resolve, 350));
