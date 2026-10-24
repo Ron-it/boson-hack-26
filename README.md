@@ -112,4 +112,8 @@ the controller checks.
 
 ## Team
 
-Ronit Buti ([@Ron-it](https://github.com/Ron-it)): everything.
+- Ronit Buti ([@Ron-it](https://github.com/Ron-it))
+- Arut
+- Aryan
+- Atharva
+- Prakhar
