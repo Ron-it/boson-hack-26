@@ -12,7 +12,9 @@ export type Effect =
   | { kind: 'pick_contact'; name: string }
   | { kind: 'enter'; field: string }
   | { kind: 'open_content'; name: string; viewer: 'image' }
-  | { kind: 'send_message' };
+  | { kind: 'send_message' }
+  /** A control whose tap may not be undoable (send, pay, delete). Tapped only after the user approves it. */
+  | { kind: 'irreversible' };
 
 /** An outgoing message the app shows, with the delivery state it displays. */
 export type Outgoing = { text: string; status: 'sent' | 'sending' | 'failed' };
@@ -27,6 +29,8 @@ export type AppCapability = {
   /** Outgoing messages on screen, when the app supports sending. */
   outgoing?(observation: PhoneObservation): Outgoing[];
   outcome?(observation: PhoneObservation, request: WorkflowRequest, selection?: ContentSelection): OutcomeEvidence | undefined;
+  /** The screen redraws live content (countdowns, maps, media), so a control is re-found by id, role and position instead of exact identity. */
+  liveContent?: true;
 };
 
 const resourceName = (element: Element) => element.resourceId.slice(element.resourceId.indexOf('/') + 1);
@@ -73,10 +77,7 @@ const settings: AppCapability = {
   },
 };
 
-const brightnessDialog: AppCapability = {
-  packageName: 'com.android.systemui',
-  effect: element => element.enabled && element.range && element.resourceId === 'com.android.systemui:id/slider' ? { kind: 'navigate' } : undefined,
-};
+
 
 /** DocumentsUI's search filters locally as text changes. No Enter, submit, provider write or file deletion is exposed. */
 function files(packageName: string): AppCapability {
@@ -120,20 +121,31 @@ const photosViewer: AppCapability = {
   },
 };
 
-const capabilities = new Map([googleMessages, settings, brightnessDialog, files('com.google.android.documentsui'), files('com.android.documentsui'), photosViewer].map(capability => [capability.packageName, capability]));
+const capabilities = new Map<string, AppCapability>([googleMessages, settings, files('com.google.android.documentsui'), files('com.android.documentsui'), photosViewer].map(capability => [capability.packageName, capability]));
 
-/** Labels whose tap may be irreversible. The generic operator leaves these for the user. */
+/** Labels whose tap may be irreversible. The generic operator asks the user before tapping these. */
 const irreversible = /\b(send|pay|buy|purchase|order|checkout|delete|remove|uninstall|erase|reset|submit|post|publish|transfer|place)\b/i;
 
-/** Any other app: enabled labeled controls navigate and editable fields take model-chosen text. Irreversible labels are never offered. */
+/** Any other app: enabled labeled controls navigate, editable fields take model-chosen text, irreversible labels need approval. */
 const generic: AppCapability = {
   packageName: '*',
+  liveContent: true,
   effect(element) {
-    if (!element.enabled || irreversible.test(element.text) || irreversible.test(element.description)) return undefined;
+    if (!element.enabled) return undefined;
     if (element.editable) return { kind: 'enter', field: 'text' };
+    if (element.clickable && (irreversible.test(element.text) || irreversible.test(element.description))) return { kind: 'irreversible' };
     return element.clickable && (element.text || element.description) ? { kind: 'navigate' } : undefined;
   },
 };
+
+/** System UI: the notification shade, quick settings and the brightness dialog. Its slider plus everything generic (timer, media and call controls). */
+const systemUi: AppCapability = {
+  packageName: 'com.android.systemui',
+  liveContent: true,
+  effect: (element, observation) => element.enabled && element.range && element.resourceId === 'com.android.systemui:id/slider' ? { kind: 'navigate' } : generic.effect(element, observation),
+};
+
+capabilities.set(systemUi.packageName, systemUi);
 
 /** The supported controls of the foreground app. Apps without a dedicated capability get the generic one. */
 export function capabilityFor(observation: PhoneObservation) {

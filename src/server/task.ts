@@ -4,16 +4,18 @@ import { clockRequest, timerRequestSchema, alarmRequestSchema, type ClockProposa
 import { executeNativeCommand, type NativeTransport } from './native-commands.ts';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { actionCandidates, assertSettingsScreen, executeAction, readStableScreen, progressFingerprint, targetIsCurrent, type ActionCandidate } from '../mobile/actions.ts';
+import { actionCandidates, assertSettingsScreen, executeAction, readStableScreen, progressFingerprint, targetIsCurrent, type ActionCandidate, type NativeTool } from '../mobile/actions.ts';
 import { z } from 'zod';
-import type { PhoneControl, PhoneObservation } from '../mobile/portal.ts';
+import { globalActions, type GlobalAction, type PhoneControl, type PhoneObservation } from '../mobile/portal.ts';
 import { createSelector } from '../mobile/selectors.ts';
 import { capabilityFor, type Outgoing } from '../mobile/capabilities.ts';
 import { appOpenedEvidence, workflowRequestSchema, type ContentSelection } from '../mobile/workflows.ts';
 
 /** What the user is asked to approve. Approval applies once, to exactly this payload and request revision. */
 type MessageProposal = { id: string; operation: 'send_message'; app: string; recipient: string; message: string };
-export type Proposal = MessageProposal | ClockProposal;
+/** An irreversible tap in any app, asked in plain words. */
+type TapProposal = { id: string; operation: 'tap'; app: string; label: string; detail: string; recipient?: never; message?: never };
+export type Proposal = MessageProposal | ClockProposal | TapProposal;
 export type TaskStatus = { type: 'task'; state: 'paused' | 'working' | 'confirming' | 'question' | 'declined' | 'completed' | 'blocked' | 'unknown'; goal: string; detail: string; revision: number; awaitingContinue?: true; proposal?: Proposal; evidence?: OperationEvidence; progress?: OperationProgress[] };
 
 const singleLine = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\r\n]*$/, 'Use a single line');
@@ -31,7 +33,8 @@ export type PhoneRequest = z.infer<typeof phoneRequestSchema>;
 /** The exact control the user approved. Approval never transfers to another control or app. */
 type Target = { packageName: string; resourceId: string; label: string };
 type PendingMessage = MessageProposal & { revision: number; target: Target; stepKey?: string };
-type PendingProposal = PendingMessage | (ClockProposal & { revision: number; stepKey?: string });
+type PendingTap = TapProposal & { revision: number; stepKey?: string; packageName: string };
+type PendingProposal = PendingMessage | PendingTap | (ClockProposal & { revision: number; stepKey?: string });
 type Counts = Record<Outgoing['status'], number>;
 /** A dispatched send, with the outgoing copies of its text that were already on screen just before the tap. */
 type Sent = { recipient: string; message: string; packageName: string; before: Counts };
@@ -93,6 +96,11 @@ export class PhoneTask {
   private nativePending = false;
   private brightnessEvidence: number | undefined;
   private proposal: PendingProposal | undefined;
+  /** Irreversible taps the user approved for the current goal, by app and label. */
+  private approvedTaps = new Set<string>();
+  /** The question the operator last asked; the next request carries the user's answer. */
+  private lastQuestion: string | undefined;
+  private answered: string | undefined;
   private plan: PlannedOperation[] = [];
   private currentStep: PlannedOperation | undefined;
   private phone: PhoneControl;
@@ -157,8 +165,15 @@ export class PhoneTask {
       || (proposal.stepKey !== undefined && this.currentStep?.key !== proposal.stepKey)) return { status: 'expired', settled: Promise.resolve() };
     this.proposal = undefined;
     if (!approve) {
-      this.finish('declined', proposal.operation === 'send_message' ? `Not sent. The draft to ${proposal.recipient} is still in ${proposal.app}.` : 'Not created. Clock was not changed.', this.revision);
+      this.finish('declined', proposal.operation === 'send_message' ? `Not sent. The draft to ${proposal.recipient} is still in ${proposal.app}.`
+        : proposal.operation === 'tap' ? `Okay, I didn't tap ${JSON.stringify(proposal.label)}.` : 'Not created. Clock was not changed.', this.revision);
       return { status: 'declined', settled: Promise.resolve() };
+    }
+    if (proposal.operation === 'tap') {
+      // The operator observes again and taps the approved control itself, so a changed screen is never tapped blindly.
+      this.approvedTaps.add(`${proposal.packageName}|${proposal.label}`);
+      if (this.currentStep) this.currentStep.state = 'pending';
+      return { status: 'accepted', settled: this.schedule('Continuing with your approval') };
     }
     return { status: 'accepted', settled: this.schedule('Checking the approved action', async (revision, signal) => {
       if (proposal.operation === 'send_message') await this.send(proposal, revision, signal);
@@ -177,6 +192,10 @@ export class PhoneTask {
     }
     const previous = this.plan.some(step => step.state !== 'completed') ? this.plan : [];
     this.request = parsed.data;
+    this.approvedTaps.clear();
+    // A request right after a question is the user's answer to it.
+    this.answered = this.lastQuestion;
+    this.lastQuestion = undefined;
     this.plan = this.planRequest(parsed.data);
     for (const step of this.plan) {
       const retained = previous.find(old => old.key === step.key && (old.state === 'completed' || (old.state === 'unknown' && old.recovery === 'manual')));
@@ -189,6 +208,22 @@ export class PhoneTask {
       return Promise.resolve();
     }
     return this.schedule();
+  }
+
+  /** Phone-wide actions Portal performs directly: no screen reading and no model call. */
+  quick(action: GlobalAction | 'open_app' | 'open_link', target = '') {
+    const labels: Record<GlobalAction, string> = { back: 'Went back.', home: 'On the home screen.', recent_apps: 'Showing recent apps.', notifications: 'Opened notifications.', quick_settings: 'Opened quick settings.' };
+    this.interrupt('Replacing the previous request');
+    this.explicitlyPaused = false;
+    this.request = undefined;
+    this.plan = [];
+    this.goal = action === 'open_app' ? `Open ${target}` : action === 'open_link' ? `Open ${target}` : labels[action];
+    return this.schedule('Working', async revision => {
+      const result = action === 'open_app' ? await this.openApp(target) : action === 'open_link' ? await this.openLink(target)
+        : this.phone.global ? await this.phone.global(globalActions[action]).then(() => ({ state: 'completed' as const, detail: labels[action] }))
+        : { state: 'blocked' as const, detail: 'Phone-wide actions are unavailable on this connection.' };
+      this.finish(result.state, result.detail, revision);
+    });
   }
 
   setBrightness(percent: number) {
@@ -524,12 +559,15 @@ export class PhoneTask {
         }
       }
     }
-    const history: string[] = [];
+    const history: string[] = this.answered ? [`You asked the user ${JSON.stringify(this.answered)} and the goal now includes their answer. Act on the most sensible reading; do not ask again.`] : [];
+    const context = { request, apps, answered: this.answered !== undefined,
+      tools: { global: !!this.phone.global, key: !!this.phone.key, deepLink: !!this.phone.deepLink, native: !!this.native } };
     let selection: ContentSelection | undefined;
     let minimumMs = 120;
     let previous: { id: string; fingerprint: string } | undefined;
     let unchanged = 0;
     let dispatchFailures = 0;
+    let discarded = 0;
     for (let step = 0; step < 24; step++) {
       check();
       const observation = await measure(this.timingContext(), 'settle', () => retrying(signal, () => readStableScreen(this.phone, signal, minimumMs)));
@@ -545,7 +583,7 @@ export class PhoneTask {
         if (unchanged >= 2) throw new Error(settings ? 'No progress. Please reopen Display settings and try again.'
           : `I got stuck in ${observation.app.currentApp} after ${(history.at(-2) ?? previous.id).replace(/[.!?]$/, '')}. You can take it from here or ask again.`);
       } else unchanged = 0;
-      const candidates = actionCandidates(observation, { request, apps });
+      const candidates = actionCandidates(observation, context);
       let screenshot: Uint8Array | undefined;
       if (this.phone.screenshot && observation.elements.filter(element => element.text).length < 3) {
         try {
@@ -560,14 +598,20 @@ export class PhoneTask {
       const chosen = candidates.find(item => item.id === decision.actionId);
       if (!chosen) throw new Error('Invalid phone action; stopped');
       const freeText = chosen.action.type === 'type' && !chosen.action.text;
-      if (freeText && !decision.text?.trim()) { history.push(`No text supplied for ${chosen.id}; supply text with that action.`); continue; }
+      const needsText = freeText || chosen.action.type === 'open_app' || chosen.action.type === 'open_link' || (chosen.action.type === 'native' && chosen.action.tool === 'set_alarm');
+      const needsValue = chosen.action.type === 'native' && chosen.action.tool !== 'set_alarm';
+      if (needsText && !decision.text?.trim()) { history.push(`No text supplied for ${chosen.id}; supply text with that action.`); continue; }
+      if (needsValue && typeof decision.value !== 'number') { history.push(`No value supplied for ${chosen.id}; supply a number as value.`); continue; }
       const current = await retrying(signal, () => this.phone.state());
       check();
       if (settings) assertSettingsScreen(current);
-      if (!targetIsCurrent(chosen, observation, current, { request, apps })) {
+      if (!targetIsCurrent(chosen, observation, current, context)) {
+        // Every discard costs a model call; a screen that never holds still ends the task instead.
+        if (++discarded >= 3) { this.finish('blocked', `The screen in ${current.app.currentApp} keeps changing before I can act. You can take it from here or ask again.`, revision); return; }
         history.push('Screen changed. Discarded the pending action and observed again.');
         continue;
       }
+      discarded = 0;
       const candidate: ActionCandidate = freeText && chosen.action.type === 'type' && decision.text
         ? { ...chosen, action: { ...chosen.action, text: decision.text }, description: `Type ${JSON.stringify(decision.text)}` } : chosen;
       const app = current.app.currentApp;
@@ -575,7 +619,7 @@ export class PhoneTask {
       const visibleContext = heading ? ` showing ${JSON.stringify(heading.slice(0, 60))}` : '';
       if (candidate.action.type === 'ask') {
         const names = request.recipient ? recipientNames(current, request.recipient) : [];
-        this.finish('question', names.length > 1 ? `Which ${request.recipient} do you mean: ${names.slice(0, 3).join(' or ')}?` : `I'm in ${app}${visibleContext}. What result do you want here?`, revision);
+        this.finish('question', names.length > 1 ? `Which ${request.recipient} do you mean: ${names.slice(0, 3).join(' or ')}?` : decision.text?.trim() || `What should I do in ${app}?`, revision);
         return;
       }
       if (candidate.action.type === 'send') {
@@ -599,7 +643,7 @@ export class PhoneTask {
           if (request.outcome) { this.finish('unknown', `I stopped in ${app}${visibleContext}, but I can't check that it's done. Please have a look.`, revision); return; }
           this.finish('completed', answer || `Done in ${app}.`, revision); return;
         }
-        this.finish('blocked', request.message ? `Not sent. I stopped in ${app} before the confirmation step.` : `I couldn't finish in ${app}${visibleContext}. You can take it from here or ask again.`, revision); return;
+        this.finish('blocked', request.message ? `Not sent. I stopped in ${app} before the confirmation step.` : answer || `I couldn't finish in ${app}${visibleContext}. You can take it from here or ask again.`, revision); return;
       }
       if (candidate.action.type === 'done' || candidate.action.type === 'blocked') {
         if (candidate.action.type === 'done' && request.brightness !== undefined && this.native) {
@@ -615,9 +659,28 @@ export class PhoneTask {
           : 'The requested Settings result is not established by observed values.', revision, undefined, verified ? { kind: 'display_settings', brightness: request.brightness, nightLight: request.nightLight } : undefined);
         return;
       }
-      this.emit({ type: 'task', state: 'working', goal, detail: candidate.description, revision });
+      let dispatched = candidate;
+      if (candidate.action.type === 'confirm_tap') {
+        const { x, y, label } = candidate.action;
+        if (!this.approvedTaps.has(`${current.app.packageName}|${label}`)) { this.proposeTap(current, label, revision); return; }
+        dispatched = { ...candidate, action: { type: 'tap', x, y }, description: `Tap ${JSON.stringify(label)}.` };
+      }
+      if (candidate.action.type === 'native' || candidate.action.type === 'open_app' || candidate.action.type === 'open_link') {
+        this.emit({ type: 'task', state: 'working', goal, detail: candidate.description, revision });
+        const result = candidate.action.type === 'native' ? await this.nativeTool(candidate.action.tool, decision)
+          : candidate.action.type === 'open_app' ? await this.openApp(decision.text?.trim() ?? '')
+          : await this.openLink(decision.text?.trim() ?? '');
+        check();
+        if (result.state === 'unknown') { this.finish('unknown', result.detail, revision); return; }
+        if (result.state === 'completed' && decision.finish && candidate.action.type === 'native') { this.finish('completed', result.detail, revision); return; }
+        history.push(result.detail);
+        previous = undefined;
+        minimumMs = candidate.action.type === 'native' ? 120 : 350;
+        continue;
+      }
+      this.emit({ type: 'task', state: 'working', goal, detail: dispatched.description, revision });
       check();
-      try { await measure(this.timingContext(), 'dispatch', () => executeAction(this.phone, candidate, async () => {
+      try { await measure(this.timingContext(), 'dispatch', () => executeAction(this.phone, dispatched, async () => {
         // Focus lands a few frames after the tap; poll briefly instead of failing on the first read.
         for (let attempt = 0; ; attempt++) {
           check();
@@ -648,6 +711,75 @@ export class PhoneTask {
       minimumMs = candidate.action.type === 'swipe' || candidate.action.type === 'launch' ? 350 : 120;
     }
     throw new Error('That took too many steps, so I stopped. You can take it from here or ask again.');
+  }
+
+  /** Asks before an irreversible tap, naming the draft when the tap would send it. */
+  private proposeTap(observation: PhoneObservation, label: string, revision: number) {
+    const app = observation.app.currentApp;
+    const draft = /send|post|submit|publish/i.test(label) ? observation.elements.find(element => element.editable && element.text.trim())?.text.trim() : undefined;
+    const detail = `Tap ${JSON.stringify(label)} in ${app}?${draft ? ` It will send ${JSON.stringify(draft.slice(0, 160))}.` : ''}`;
+    const proposal: PendingTap = { ...(this.currentStep && { stepKey: this.currentStep.key }), id: randomUUID(), operation: 'tap', app, label, detail, revision, packageName: observation.app.packageName };
+    this.proposal = proposal;
+    this.finish('confirming', detail, revision, { id: proposal.id, operation: 'tap', app, label, detail });
+  }
+
+  /** Native shortcuts the operator can choose mid-task. An unacknowledged write is reported, never retried. */
+  private async nativeTool(tool: NativeTool, decision: { text?: string | null; value?: number | null }): Promise<{ state: 'completed' | 'blocked' | 'unknown'; detail: string }> {
+    if (!this.native) return { state: 'blocked', detail: `${tool} is unavailable; use the screen instead.` };
+    const value = decision.value ?? Number.NaN;
+    const label = decision.text?.trim().slice(0, 120) ?? '';
+    if (tool === 'set_timer' || tool === 'set_alarm') {
+      let command: ClockCommand;
+      if (tool === 'set_timer') {
+        const seconds = Math.round(value);
+        if (!(seconds >= 1 && seconds <= 86400)) return { state: 'blocked', detail: 'set_timer needs whole seconds between 1 and 86400 as value.' };
+        command = { name: 'create_timer', args: { seconds, label } };
+      } else {
+        const time = /^(\d{1,2}):(\d{2})$/.exec(label);
+        const hour = Number(time?.[1]), minute = Number(time?.[2]);
+        if (!time || hour > 23 || minute > 59) return { state: 'blocked', detail: 'set_alarm needs a 24-hour time like "07:30" as text.' };
+        command = { name: 'create_alarm', args: { hour, minute, label: '' } };
+      }
+      if (this.execution.clockUnknown) return { state: 'unknown', detail: 'An earlier Clock request may already exist. Check Clock; I will not create another automatically.' };
+      this.execution.clockUnknown = command;
+      const result = await executeNativeCommand(command, this.native);
+      if (result.status === 'unknown') return { state: 'unknown', detail: 'Clock did not acknowledge the request. Check Clock before asking again.' };
+      this.execution.clockUnknown = undefined;
+      if (result.status === 'blocked') return { state: 'blocked', detail: `Clock refused: ${result.reason}` };
+      return { state: 'completed', detail: command.name === 'create_timer' ? `Started a ${command.args.seconds} second timer${label ? ` named ${JSON.stringify(label)}` : ''}.`
+        : `Set an alarm for ${String(command.args.hour).padStart(2, '0')}:${String(command.args.minute).padStart(2, '0')}.` };
+    }
+    if (tool === 'set_media_volume') {
+      const percent = Math.round(value);
+      if (!(percent >= 0 && percent <= 100)) return { state: 'blocked', detail: 'set_media_volume needs a percentage from 0 to 100 as value.' };
+      const result = await executeNativeCommand({ name: 'set_media_volume', args: { percent } }, this.native).catch(() => ({ status: 'unknown' as const, reason: '' }));
+      if (result.status === 'completed') return { state: 'completed', detail: `Media volume is at ${percent}%.` };
+      return result.status === 'blocked' ? { state: 'blocked', detail: result.reason } : { state: 'unknown', detail: 'The media volume change was not confirmed. Check the volume before asking again.' };
+    }
+    const percent = Math.round(value);
+    if (!(percent >= 10 && percent <= 100)) return { state: 'blocked', detail: 'set_brightness needs a percentage from 10 to 100 as value.' };
+    const result = await executeNativeCommand({ name: 'set_brightness', args: { percent } }, this.native).catch(() => ({ status: 'unknown' as const, reason: '' }));
+    if (result.status === 'completed') return { state: 'completed', detail: `Brightness is at ${percent}%.` };
+    return result.status === 'blocked' ? { state: 'blocked', detail: `${result.reason} Use quick settings or Display settings instead.` } : { state: 'unknown', detail: 'The brightness change was not confirmed.' };
+  }
+
+  /** Launches an installed app by its label through Portal, without screen navigation. */
+  private async openApp(name: string): Promise<{ state: 'completed' | 'blocked'; detail: string }> {
+    const installed = await this.phone.packages();
+    const exact = installed.filter(app => app.label.toLowerCase() === name.toLowerCase());
+    const matches = exact.length ? exact : installed.filter(app => contains(app.label, name));
+    const [app] = matches;
+    if (!app) return { state: 'blocked', detail: `No installed app is called ${JSON.stringify(name)}.` };
+    if (matches.length > 1 && !exact.length) return { state: 'blocked', detail: `Several apps match ${JSON.stringify(name)}: ${matches.slice(0, 4).map(match => match.label).join(', ')}. Use the exact name.` };
+    await this.phone.launch(app.packageName);
+    return { state: 'completed', detail: `Opened ${app.label}.` };
+  }
+
+  /** Opens a URI through Portal's deep-link intent: web pages, dialer, maps, mail, app links. */
+  private async openLink(uri: string): Promise<{ state: 'completed' | 'blocked'; detail: string }> {
+    if (!this.phone.deepLink || !/^[a-z][a-z0-9+.-]*:\S+$/i.test(uri)) return { state: 'blocked', detail: `Cannot open ${JSON.stringify(uri)}; supply a full URI such as https://… or tel:+1….` };
+    await this.phone.deepLink(uri);
+    return { state: 'completed', detail: `Opened ${uri}.` };
   }
 
   /** Several different visible names match the requested recipient and none matches it exactly. */
@@ -747,6 +879,7 @@ export class PhoneTask {
 
   private finish(state: TaskStatus['state'], detail: string, revision: number, proposal?: Proposal, evidence?: OperationEvidence) {
     if (revision !== this.revision) return;
+    this.lastQuestion = state === 'question' ? detail : undefined;
     const step = this.currentStep;
     if (step) {
       step.state = state === 'working' || state === 'paused' ? 'pending' : state;
