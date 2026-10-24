@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bosonSessionConfiguration, completionResponse, presetInstructions } from '../src/server/voice.ts';
-import { parsePreset, presets } from '../src/server/presets.ts';
+import { parsePreset, presets, sessionPreset } from '../src/server/presets.ts';
+import { createVoice } from '../src/server/voices.ts';
 
 test('task completion uses a supported Boson response instruction instead of a rejected system message', () => {
   const event = completionResponse({ type: 'task', state: 'completed', goal: 'Leave Night Light off', detail: 'Observed Night Light OFF', revision: 2 });
@@ -192,4 +193,23 @@ test('a preset changes manner and pacing while the shared phone rules stay in ev
   const update = completionResponse({ type: 'task', state: 'question', goal: 'Send a photo', detail: 'Which photo?', revision: 1 }, presetInstructions(presets.family));
   assert.match(update.response.instructions, /Always speak Hindi/);
   assert.match(update.response.instructions, /Do not describe an action as completed until/);
+});
+
+test('Family speaks the phone\'s language in its cloned voice, and malformed settings fall back', () => {
+  const spanish = sessionPreset(new URLSearchParams('preset=family&language=es&voice=voice_abc123'));
+  assert.equal(spanish.voice, 'voice_abc123');
+  assert.match(spanish.style, /Always speak Spanish/);
+  assert.doesNotMatch(spanish.style, /aap/);
+  const fallback = sessionPreset(new URLSearchParams('preset=family&language=xx&voice=eleanor'));
+  assert.equal(fallback.voice, presets.family.voice);
+  assert.match(fallback.style, /Always speak Hindi/);
+  assert.equal(sessionPreset(new URLSearchParams('preset=quick&voice=voice_abc123')).voice, 'default');
+});
+
+test('a family voice is cloned from the recording and its exact transcript', async () => {
+  let sent: unknown;
+  const fetcher: typeof fetch = async (_url, init) => { sent = JSON.parse(String(init?.body)); return Response.json({ voice_id: 'voice_abc123', title: null, ref_text: 'Hola' }); };
+  assert.equal(await createVoice({ audio: 'UklGRg==', text: 'Hola' }, 'key', fetcher), 'voice_abc123');
+  assert.deepEqual(sent, { ref_audio: 'UklGRg==', ref_text: 'Hola', description: 'Tandem family voice' });
+  await assert.rejects(createVoice({ audio: 'UklGRg==', text: 'Hola' }, 'key', async () => new Response('{}', { status: 400 })), /Record again/);
 });

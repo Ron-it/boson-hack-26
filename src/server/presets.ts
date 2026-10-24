@@ -11,21 +11,37 @@ export type Preset = {
 };
 
 export const presetName = z.enum(['quick', 'family', 'hands_free']);
+
+/** Languages a family voice can be set up in. The phone keeps the choice and sends it with each session. */
+export const familyLanguage = z.enum(['hi', 'en', 'es', 'fr', 'de', 'zh']);
+export type FamilyLanguage = z.infer<typeof familyLanguage>;
+const languageNames: Record<FamilyLanguage, string> = { hi: 'Hindi', en: 'English', es: 'Spanish', fr: 'French', de: 'German', zh: 'Mandarin Chinese' };
+const manners: Partial<Record<FamilyLanguage, string>> = {
+  hi: 'Use respectful forms: "aap", "ji". Never call them "beta". Short reassurances like "bas ek second" or "ho raha hai" fit well.',
+};
+/** A cloned Boson voice. Boson closes the session on an unknown voice, so anything else is dropped. */
+export const voiceId = z.string().regex(/^voice_[A-Za-z0-9_-]+$/);
+
+/** Family speaks one language, in the helper's cloned voice when the phone has one. */
+export function familyPreset(language: FamilyLanguage = 'hi', voice = process.env.FAMILY_VOICE?.trim() || 'default'): Preset {
+  const name = languageNames[language];
+  return {
+    silenceMs: 900,
+    voice,
+    // Boson Realtime takes delivery (tone, pace, energy) from the instructions, not a parameter.
+    style: `The user may be an older parent or grandparent who is not confident with phones.
+Always speak ${name}, even when the user speaks another language or a task update arrives in English. Use simple everyday spoken ${name}, the way family talks at home, not formal or textbook ${name}. Keep contact names, app names and message text exactly as the user said them.
+Sound warm, gentle and caring, with a smile in your voice, like a loving grandchild helping their grandparent. Let your voice rise and fall naturally; never sound flat or robotic. Speak a little slowly, with short pauses between ideas.
+Address them respectfully, without pet names or family titles. ${manners[language] ?? ''}
+Reassure them in a few kind words while something takes a moment. When it is done, say what happened in one simple, happy sentence.
+If they sound confused or repeat themselves, do not repeat your question word for word: rephrase it more simply, or offer to show them how.`,
+  };
+}
 export type PresetName = z.infer<typeof presetName>;
 
 export const presets: Record<PresetName, Preset> = {
   quick: { style: '', silenceMs: 450, voice: 'default' },
-  family: {
-    silenceMs: 900,
-    // A family member can clone their own voice, so help sounds like them.
-    voice: process.env.FAMILY_VOICE?.trim() || 'default',
-    // Boson Realtime takes delivery (tone, pace, energy) from the instructions, not a parameter.
-    style: `The user may be an older parent or grandparent who is not confident with phones.
-Always speak Hindi, even when the user speaks English or a task update arrives in English. Use simple everyday spoken Hindi, the way family talks at home, not formal or textbook Hindi. Keep contact names, app names and message text exactly as the user said them.
-Sound warm, gentle and caring, with a smile in your voice, like a loving grandchild helping their grandparent. Let your voice rise and fall naturally; never sound flat or robotic. Speak a little slowly, with short pauses between ideas.
-Use respectful forms: "aap", "ji". Never call them "beta". Reassure them in a few kind words while something takes a moment ("bas ek second", "ho raha hai"). When it is done, say what happened in one simple, happy sentence.
-If they sound confused or repeat themselves, do not repeat your question word for word: rephrase it more simply, or offer to show them how.`,
-  },
+  family: familyPreset(),
   hands_free: {
     silenceMs: 700,
     voice: 'eleanor',
@@ -37,3 +53,10 @@ Speak calmly and briefly.`,
 
 /** An unknown or missing preset falls back to the original behavior rather than refusing the session. */
 export const parsePreset = (value: string | null | undefined) => presetName.catch('quick').parse(value);
+
+/** The session's preset from its query. Malformed Family settings fall back to Hindi and the server's voice. */
+export function sessionPreset(query: URLSearchParams): Preset {
+  const name = parsePreset(query.get('preset'));
+  if (name !== 'family') return presets[name];
+  return familyPreset(familyLanguage.catch('hi').parse(query.get('language')), voiceId.safeParse(query.get('voice')).data);
+}

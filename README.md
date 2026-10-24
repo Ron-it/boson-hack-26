@@ -23,8 +23,8 @@ it anytime to correct it, pause it, or take over.
 | --- | --- |
 | **Higgs Realtime 1.5** <br><sub>`higgs-realtime-1.5-preview`</sub> | The whole conversation in one session. It hears you, speaks back, and drives the phone through eight tools: start or correct a task, look at the screen, confirm, guide mode, pause, continue, stop, and instant actions. |
 | **Higgs STT 3.1** <br><sub>`higgs-stt-3.1`</sub> | Transcribes your words so a "yes, send it" only counts if you actually said it. |
-| **Voice cloning** | Family mode speaks Hindi in a cloned voice. We recorded Ronit, created a custom voice with Boson's voice API, and made it the Family voice, so a parent hears help in their own child's voice. |
-| **Voice presets** | **Quick** for fast turn-taking. **Family** is warm, slower, always Hindi. **Hands-free** never asks you to touch the screen. |
+| **Voice cloning** | Family mode speaks in a cloned voice. In Settings, the helper picks a language, reads a short paragraph aloud, and the controller clones it with Boson's voice API, so a parent hears help in their own child's voice. |
+| **Voice presets** | **Quick** for fast turn-taking. **Family** is warm, slower, and always speaks its chosen language (Hindi, English, Spanish, French, German or Mandarin). **Hands-free** never asks you to touch the screen. |
 
 Your voice interrupts everything: speech cancels in-flight phone work, flushes
 playback, and the corrected goal replaces the old one. Sending, paying and
@@ -81,7 +81,8 @@ Expose it over HTTPS (any tunnel or host works; the `Dockerfile` is what we run)
 `npm run voice:check` runs a synthetic Higgs session without a phone.
 `npm test` and `npm run typecheck` run the controller checks.
 
-Your own Family voice: `bash scripts/family-voice.sh` records Hindi, clones it with
+Your own Family voice: Settings > Family voice on the phone. To set a fallback for
+phones without one, `bash scripts/family-voice.sh` records Hindi, clones it with
 Boson and saves `FAMILY_VOICE=voice_<id>`. Set the same variable on your controller.
 
 Build the APK (JDK 17 and the Android SDK; Expo Go does not work):
