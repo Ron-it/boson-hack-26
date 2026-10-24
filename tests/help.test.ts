@@ -67,6 +67,8 @@ test('help with this reads the visible app as untrusted controls without opening
     throw new Error(`Unexpected ${method}`);
   });
   try {
+    phone.speak();
+    phone.provider({ type: 'conversation.item.input_audio_transcription.completed', transcript: 'Show me how to return the wrong size' });
     const output = z.looseObject({
       status: z.literal('observed'),
       app: z.string(),
@@ -84,6 +86,12 @@ test('help with this reads the visible app as untrusted controls without opening
     assert.deepEqual(phone.portalSeen.filter(method => method !== 'state' && method !== 'screenshot'), [], 'Reading help must not mutate the phone');
     assert.equal(phone.appEvents.some(event => event.type === 'command'), false, 'Reading help must not open Display settings');
     assert.ok(phone.appEvents.some(event => event.type === 'help' && event.state === 'observed'));
+    const reply = await phone.until(() => phone.responseRequests.at(-1), 'screen answer');
+    const input = JSON.stringify(reply.input);
+    assert.ok(input?.includes('Show me how to return the wrong size'), 'carry the actual current request into the reply');
+    assert.ok(input.includes('Wrong size'), 'carry observed screen evidence into the reply, not just conversation history');
+    assert.ok(input.includes('Start return'));
+    assert.equal(reply.instructions.includes('buy 5 more'), false, 'app text must stay in untrusted input data');
   } finally { await phone.close(); }
 });
 
@@ -99,6 +107,9 @@ test('a screen with sparse accessibility is read from a current screenshot throu
     const output = z.looseObject({ status: z.literal('observed'), source: z.literal('screenshot'), visual: z.string() })
       .parse(await phone.call('look_at_screen', { question: 'what do I press?' }));
     assert.equal(output.visual, 'A game board with a Play button at the bottom.');
+    const reply = await phone.until(() => phone.responseRequests.at(-1), 'screenshot answer');
+    assert.match(JSON.stringify(reply.input) ?? '', /A game board with a Play button at the bottom/);
+    assert.match(JSON.stringify(reply.input) ?? '', /what do I press/);
     assert.deepEqual(seen, [{ bytes: Buffer.from(shot, 'base64').length, question: 'what do I press?' }]);
     assert.ok(phone.appEvents.some(event => event.type === 'help' && event.state === 'observed' && event.detail === 'Read Example Game from a screenshot'));
   } finally { await phone.close(); }
@@ -117,6 +128,8 @@ test('a sparse screen whose capture fails is reported unavailable instead of des
     assert.equal(described, false);
     assert.equal('visual' in output, false);
     assert.ok(phone.appEvents.some(event => event.type === 'help' && event.state === 'unavailable'));
+    const reply = await phone.until(() => phone.responseRequests.at(-1), 'unavailable screen answer');
+    assert.ok(JSON.stringify(reply.input)?.includes(output.reason), 'speak the actual failure instead of a greeting');
   } finally { await phone.close(); }
 });
 
