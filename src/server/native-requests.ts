@@ -16,16 +16,15 @@ export function clockRequest(request: { timer?: z.infer<typeof timerRequestSchem
   if (request.timer) {
     if (request.timer.seconds === undefined) return { question: 'How long should the timer run?' };
     const command = { name: 'create_timer', args: { seconds: request.timer.seconds, label: request.timer.label } } as const;
-    return { command, detail: `Create a ${command.args.seconds} seconds timer${command.args.label ? ` named ${JSON.stringify(command.args.label)}` : ''}?` };
+    return { command, detail: `Started a ${command.args.seconds} second timer${command.args.label ? ` named ${JSON.stringify(command.args.label)}` : ''}.` };
   }
   if (request.alarm) {
-    const { hour, minute, period, occurrence, label } = request.alarm;
+    const { hour, minute, period, label } = request.alarm;
     if (hour === undefined || minute === undefined) return { question: 'What hour and minute should the alarm use?' };
     if (period === undefined) return { question: 'Is that AM or PM, in the phone’s local time?' };
     if (period !== '24h' && (hour < 1 || hour > 12)) return { question: 'What time do you mean, including AM or PM?' };
-    if (occurrence !== 'next') return { question: 'Should this alarm use the next occurrence of that time on the phone? Date-specific or repeating alarms need the Clock app.' };
     const localHour = period === '24h' ? hour : hour % 12 + (period === 'pm' ? 12 : 0);
     const command = { name: 'create_alarm', args: { hour: localHour, minute, label } } as const;
-    return { command, detail: `Create an alarm for the next ${String(localHour).padStart(2, '0')}:${String(minute).padStart(2, '0')} in the phone’s local time${label ? ` named ${JSON.stringify(label)}` : ''}?` };
+    return { command, detail: `Set an alarm for ${String(localHour).padStart(2, '0')}:${String(minute).padStart(2, '0')}${label ? ` named ${JSON.stringify(label)}` : ''}.` };
   }
 }

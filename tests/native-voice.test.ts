@@ -19,7 +19,7 @@ test('voice media volume and independent read use the typed native protocol', as
   } finally { await h.close(); }
 });
 
-test('voice Clock proposal is spoken with concrete duration and cannot be self-approved', async () => {
+test('a voice timer starts without a confirmation round trip', async () => {
   const app = messagesApp();
   let creates = 0;
   const h = await harness(app.portal, { native: async name => {
@@ -28,18 +28,10 @@ test('voice Clock proposal is spoken with concrete duration and cannot be self-a
     return { status: 'handoff', handlerPackage: 'clock', note: 'Inspect Clock' };
   } });
   try {
-    await h.call('update_phone_task', { instruction: 'Tea for five minutes', timer: { seconds: 300, label: 'Tea' } });
-    const event = await h.until(() => h.appEvents.find(event => event.state === 'confirming'), 'Clock proposal');
-    const proposal = event.proposal;
-    assert.ok(proposal && typeof proposal === 'object' && 'id' in proposal && typeof proposal.id === 'string');
-    await h.until(() => h.announcements.find(text => text.includes('300 seconds') && text.includes('Tea')), 'spoken concrete proposal');
-    const premature = await h.call('confirm_phone_action', { proposalId: proposal.id, approve: true });
-    assert.ok(premature && typeof premature === 'object' && 'status' in premature && premature.status === 'blocked');
-    assert.equal(creates, 0);
-    h.speak();
-    await h.call('confirm_phone_action', { proposalId: proposal.id, approve: true });
-    await h.until(() => h.appEvents.find(event => event.state === 'unknown'), 'unverified Clock outcome');
+    await h.call('update_phone_task', { instruction: 'Tea for five minutes', app: 'Clock', timer: { seconds: 300, label: 'Tea' } });
+    await h.until(() => h.appEvents.find(event => event.state === 'completed'), 'started timer');
     assert.equal(creates, 1);
-    assert.equal(h.appEvents.some(event => event.state === 'completed'), false);
+    assert.equal(h.appEvents.some(event => event.state === 'confirming'), false);
+    await h.until(() => h.announcements.find(text => text.includes('300 second timer')), 'spoken outcome');
   } finally { await h.close(); }
 });

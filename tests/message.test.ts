@@ -277,6 +277,24 @@ test('voice asks with the concrete recipient and message, and sends only after t
   } finally { await phone.close(); }
 });
 
+test('a clear spoken answer overrides the yes or no the voice model relays', async () => {
+  for (const [said, relayed, sends] of [['Yes.', 'no', 1], ['No, cancel that.', 'yes', 0]] as const) {
+    const app = messagesApp();
+    const phone = await harness(app.portal, { selector: navigator });
+    try {
+      await phone.call('update_phone_task', voiceRequest);
+      const proposal = await proposalOf(phone);
+      await phone.until(() => phone.announcements.find(text => text.includes(proposal.id)), 'the spoken confirmation');
+      phone.speak();
+      phone.provider({ type: 'conversation.item.input_audio_transcription.completed', transcript: said });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      await phone.call('confirm_phone_action', { proposalId: proposal.id, answer: relayed });
+      await phone.until(() => phone.appEvents.map(event => taskEvent.safeParse(event)).find(event => event.success && ['completed', 'declined'].includes(event.data.state)), 'the answer to settle');
+      assert.equal(app.sent.length, sends, `${said} with a relayed ${relayed}`);
+    } finally { await phone.close(); }
+  }
+});
+
 test('a confirmation queued while the voice is busy is still asked aloud before it can be approved', async () => {
   const app = messagesApp();
   const phone = await harness(app.portal, { selector: navigator, holdResponses: true });
