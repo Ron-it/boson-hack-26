@@ -169,6 +169,10 @@ class VoiceService : Service() {
       check(!getSystemService(KeyguardManager::class.java).isDeviceLocked) { "Unlock the phone first" }
       when (event.getString("name")) {
         "open_display" -> { startActivity(Intent(Settings.ACTION_DISPLAY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); result.put("status", "opened") }
+        "read_brightness" -> {
+          val actual = Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS)
+          result.put("status", "observed").put("observedRawValue", actual)
+        }
         "set_brightness" -> {
           check(Settings.System.canWrite(this)) { "Enable brightness control in the voice app, or use the Settings UI task" }
           val percent = event.getJSONObject("args").getDouble("percent").coerceIn(10.0, 100.0)
