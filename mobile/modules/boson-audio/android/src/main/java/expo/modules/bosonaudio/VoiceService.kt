@@ -29,6 +29,7 @@ object VoiceState {
 }
 
 class VoiceService : Service() {
+  private companion object { const val ISSUE_NOTIFICATION = 2 }
   private var socket: WebSocket? = null
   private val client = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
   @Volatile private var running = false
@@ -44,6 +45,13 @@ class VoiceService : Service() {
   private val audioLock = Any()
   private var activeResponse = ""
   private val rejectedResponses = mutableSetOf<String>()
+  private var voiceTurn = -1
+  private var overlay: RimOverlay? = null
+  /** The server explains a closing session just before the socket ends. */
+  private var lastNotice = ""
+  private var lastNoticeAt = 0L
+  /** Frames handed to the speaker since its last flush; playback is audible until the head reaches them. */
+  private var framesWritten = 0L
 
   override fun onBind(intent: Intent?): IBinder? = null
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -59,6 +67,8 @@ class VoiceService : Service() {
         .setContentTitle("Phone voice is listening").setContentText("Tap Stop to end microphone access")
         .setContentIntent(open).setOngoing(true).addAction(Notification.Action.Builder(null, "Stop", stop).build()).build())
       running = true
+      getSystemService(NotificationManager::class.java).cancel(ISSUE_NOTIFICATION)
+      overlay = RimOverlay(this).also { it.start(appInForeground = true) }
       wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:voice").also { it.acquire(60 * 60 * 1000L) }
       val prefs = getSharedPreferences("connection", 0)
       val url = prefs.getString("url", "") ?: ""
@@ -86,16 +96,47 @@ class VoiceService : Service() {
         activeResponse = response
         val bytes = Base64.decode(event.getString("delta"), Base64.DEFAULT)
         val currentEpoch = epoch.get()
-        if (!playback.enqueue(bytes, currentEpoch)) fail("The spoken reply is too long. Please restart with a shorter request.")
+        if (!playback.enqueue(bytes, currentEpoch, response)) fail("The spoken reply is too long. Please restart with a shorter request.")
       }
       "input_audio_buffer.speech_started" -> {
-        if (rejectedResponses.size > 64) rejectedResponses.clear()
-        if (activeResponse.isNotEmpty()) rejectedResponses.add(activeResponse)
+        reject(activeResponse)
         interruptPlayback()
+        overlay?.update { speechStarted() }
         VoiceState.emit(event)
       }
       "command" -> executeCommand(event)
-      else -> VoiceState.emit(event)
+      else -> { showOnOverlay(event); VoiceState.emit(event) }
+    }
+  }
+
+  private fun reject(response: String) {
+    if (response.isEmpty()) return
+    if (rejectedResponses.size > 64) rejectedResponses.clear()
+    rejectedResponses.add(response)
+    if (response == activeResponse) interruptPlayback()
+  }
+
+  private fun notice(message: String) { lastNotice = message; lastNoticeAt = System.currentTimeMillis() }
+
+  private fun showOnOverlay(event: JSONObject) {
+    val overlay = overlay ?: return
+    val response = event.text("response_id")
+    when (event.text("type")) {
+      "voice_response" -> {
+        val turn = (event.int("voiceTurn") ?: -1)
+        val stale = turn < voiceTurn
+        voiceTurn = max(voiceTurn, turn)
+        // A stale, cancelled or suppressed response must not be heard, even if bytes already arrived.
+        if (stale || event.text("state") in setOf("cancelled", "suppressed")) reject(event.text("responseId"))
+        overlay.update { voiceResponse(event, it) }
+      }
+      "voice_issue" -> { voiceTurn = max(voiceTurn, (event.int("voiceTurn") ?: -1)); notice(event.text("detail")); overlay.update { voiceIssue(event) } }
+      "task" -> overlay.update { task(event) }
+      "help" -> overlay.update { reading(event.text("state") == "reading") }
+      "notice" -> notice(event.text("message"))
+      "conversation.item.input_audio_transcription.completed" -> overlay.update { userTranscript(event.text("transcript"), it) }
+      "response.output_audio_transcript.delta" -> if (!rejectedResponses.contains(response)) overlay.update { transcript(response, event.text("delta"), append = true) }
+      "response.output_audio_transcript.done" -> if (!rejectedResponses.contains(response)) overlay.update { transcript(response, event.text("transcript"), append = false) }
     }
   }
 
@@ -130,6 +171,7 @@ class VoiceService : Service() {
           val count = input.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
           if (count < 0) { if (running) fail("Microphone read failed"); break }
           if (count > 0 && running) {
+            overlay?.level(Level.MIC, buffer, count)
             if ((socket?.queueSize() ?: 0) > 1_000_000) { fail("Network is too slow for live audio"); break }
             if (socket?.send(JSONObject().put("type", "input_audio_buffer.append").put("audio", Base64.encodeToString(buffer, 0, count, Base64.NO_WRAP)).toString()) != true) { fail("Voice connection ended"); break }
           }
@@ -137,9 +179,17 @@ class VoiceService : Service() {
       } catch (_: Exception) { if (running) fail("Microphone stopped unexpectedly") }
     }
     thread(name = "boson-speaker") {
+      var audible: String? = null
+      fun audible(response: String?) { if (response != audible) { audible = response; overlay?.update { playback(response, it) } } }
       try {
         while (running) {
-          val packet = playback.poll(200) ?: continue
+          val packet = playback.poll(80)
+          if (packet == null) {
+            // Silent once the speaker has played everything it was given, not when the server finished sending.
+            val drained = synchronized(audioLock) { output.playbackHeadPosition.toLong() and 0xFFFFFFFFL >= framesWritten }
+            if (drained) audible(null)
+            continue
+          }
           var offset = 0
           while (running && packet.epoch == epoch.get() && offset < packet.bytes.size) {
             synchronized(audioLock) {
@@ -147,10 +197,14 @@ class VoiceService : Service() {
                 if (output.playState != AudioTrack.PLAYSTATE_PLAYING) output.play()
                 val written = output.write(packet.bytes, offset, packet.bytes.size - offset, AudioTrack.WRITE_BLOCKING)
                 check(written > 0) { "Speaker write failed" }
+                framesWritten += written / 2
+                overlay?.level(Level.PLAYBACK, packet.bytes.copyOfRange(offset, offset + written), written)
+                audible(packet.response)
                 offset += written
               }
             }
           }
+          if (packet.epoch != epoch.get()) audible(null)
         }
       } catch (_: Exception) { if (running) fail("Speaker stopped unexpectedly") }
     }
@@ -160,7 +214,8 @@ class VoiceService : Service() {
   private fun interruptPlayback() {
     epoch.incrementAndGet()
     playback.clear()
-    synchronized(audioLock) { try { track?.pause(); track?.flush() } catch (_: Exception) { } }
+    synchronized(audioLock) { try { track?.pause(); track?.flush() } catch (_: Exception) { }; framesWritten = 0 }
+    overlay?.update { playback(null, it) }
   }
 
   private fun executeCommand(event: JSONObject) {
@@ -193,11 +248,29 @@ class VoiceService : Service() {
     socket?.send(JSONObject().put("type", "command_result").put("id", event.getString("id")).put("result", result).toString())
   }
 
-  private fun emit(state: String, detail: String) { VoiceState.emit(JSONObject().put("type", "state").put("state", state).put("detail", detail)) }
-  private fun fail(message: String) { emit("error", message); stopSelf() }
+  private fun emit(state: String, detail: String) {
+    overlay?.update { session(state) }
+    VoiceState.emit(JSONObject().put("type", "state").put("state", state).put("detail", detail))
+  }
+  private fun fail(message: String) {
+    if (running) notifyEnded(lastNotice.takeIf { System.currentTimeMillis() - lastNoticeAt < 3000 } ?: message)
+    emit("error", message)
+    stopSelf()
+  }
+
+  /** The overlay leaves with the microphone, so a lost session stays visible as a dismissible notification. */
+  private fun notifyEnded(detail: String) {
+    val manager = getSystemService(NotificationManager::class.java)
+    manager.createNotificationChannel(NotificationChannel("voice-issues", "Voice session problems", NotificationManager.IMPORTANCE_DEFAULT))
+    val open = PendingIntent.getActivity(this, 3, packageManager.getLaunchIntentForPackage(packageName), PendingIntent.FLAG_IMMUTABLE)
+    manager.notify(ISSUE_NOTIFICATION, Notification.Builder(this, "voice-issues").setSmallIcon(android.R.drawable.stat_notify_error)
+      .setContentTitle("Voice stopped").setContentText(detail).setStyle(Notification.BigTextStyle().bigText(detail))
+      .setContentIntent(open).setAutoCancel(true).build())
+  }
   override fun onDestroy() {
     running = false
     ready = false
+    overlay?.stop(); overlay = null
     socket?.close(1000, "Stopped by user")
     interruptPlayback()
     try { recorder?.stop() } catch (_: Exception) { }

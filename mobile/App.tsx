@@ -6,9 +6,9 @@ import { z } from 'zod';
 import Audio from './modules/boson-audio/src/BosonAudioModule';
 
 const eventSchema = z.object({
-  type: z.string(), state: z.string().optional(), detail: z.string().optional(),
-  goal: z.string().optional(), message: z.string().optional(), mode: z.enum(['do', 'guide']).optional(),
-  transcript: z.string().optional(), delta: z.string().optional(), response_id: z.string().optional(),
+  type: z.string(), state: z.string().nullish(), detail: z.string().nullish(),
+  goal: z.string().nullish(), message: z.string().nullish(), mode: z.enum(['do', 'guide']).nullish(),
+  transcript: z.string().nullish(), delta: z.string().nullish(), response_id: z.string().nullish(),
 });
 type Event = z.infer<typeof eventSchema>;
 const taskLabels: Record<string, string> = {
@@ -49,6 +49,7 @@ function PhoneScreen() {
   const [token, setToken] = useState('');
   const [setup, setSetup] = useState(!config.configured);
   const [brightness, setBrightness] = useState(() => Audio.canSetBrightness());
+  const [overlay, setOverlay] = useState(() => Audio.canShowOverlay());
 
   const consume = useCallback((json: string) => {
     try { const parsed = eventSchema.safeParse(JSON.parse(json)); if (parsed.success) dispatch(parsed.data); } catch { /* Native event was incomplete. */ }
@@ -56,6 +57,7 @@ function PhoneScreen() {
   useEffect(() => {
     const refresh = () => {
       setBrightness(Audio.canSetBrightness());
+      setOverlay(Audio.canShowOverlay());
       try {
         const values = z.record(z.string(), z.string()).parse(JSON.parse(Audio.snapshot()));
         for (const [key, json] of Object.entries(values)) if (!key.endsWith('.delta')) consume(json);
@@ -107,6 +109,7 @@ function PhoneScreen() {
         {!!session.assistant && <><Text style={[styles.label, { color: colors.secondary, marginTop: 16 }]}>{session.assistant.trim().endsWith('?') ? 'Question' : 'Phone'}</Text><Text selectable style={[styles.body, { color: colors.text }]}>{session.assistant}</Text></>}
       </View>}
       {!session.active && <View style={styles.section}>
+        <Pressable accessibilityRole="button" style={styles.textButton} onPress={() => Audio.requestOverlayPermission()}><Text style={[styles.buttonText, { color: colors.primary }]}>{overlay ? 'Status shows over other apps' : 'Show status over other apps'}</Text></Pressable>
         <Pressable accessibilityRole="button" style={styles.textButton} onPress={() => Audio.requestBrightnessPermission()}><Text style={[styles.buttonText, { color: colors.primary }]}>{brightness ? 'Brightness control enabled' : 'Enable instant brightness control'}</Text></Pressable>
         <Pressable accessibilityRole="button" style={styles.textButton} onPress={() => setSetup(value => !value)}><Text style={[styles.buttonText, { color: colors.primary }]}>{setup ? 'Hide connection' : 'Connection settings'}</Text></Pressable>
         {setup && <View style={styles.fields}>
