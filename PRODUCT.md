@@ -76,4 +76,4 @@ The local model comparison and private device traces establish Settings navigati
 
 ## Brand Commitments
 
-No final product name or identity has been chosen. Use a restrained Android utility screen, minimal copy, no decorative cards or pills, and no continuous animations.
+The app is named Tandem: it does the task with you, or shows you how, and you can take over anytime. It lives inside the Boson AI design system (dark canvas, signal green, Manrope and Instrument Sans). The mark is a white dot (you) beside a green arc (Tandem). Keep minimal copy, no decorative cards or pills, and no continuous animations.

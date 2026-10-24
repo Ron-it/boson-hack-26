@@ -1,195 +1,290 @@
 ---
-name: Phone voice
-description: Restrained Android utility interface for explicit voice control.
+name: Tandem
+description: Dark, bottom-weighted Android voice helper built on Boson AI foundations.
 colors:
-  light-surface: "#F4F8F5"
-  light-text: "#142D28"
-  light-secondary: "#47645B"
-  light-primary: "#006B55"
-  light-on-primary: "#FFFFFF"
-  light-input: "#E4EEE7"
-  light-error: "#A32225"
-  dark-surface: "#10251F"
-  dark-text: "#E2F2E7"
-  dark-secondary: "#ADCABB"
-  dark-primary: "#7BDBB5"
-  dark-on-primary: "#00382A"
-  dark-input: "#203C31"
-  dark-error: "#FFB4AB"
+  canvas: "#0D1012"
+  surface: "#161819"
+  raised: "#1C2022"
+  text: "#EFF0F0"
+  strong: "#F4F5F5"
+  secondary: "#BFC1C2"
+  muted: "#999B9C"
+  control-border: "#60696D"
+  accent: "#2BCB3A"
+  accent-pressed: "#21B82F"
+  on-accent: "#0D1012"
+  green-soft: "#8CC4A4"
+  error: "#FF9B93"
 typography:
-  headline:
-    fontSize: "32px"
-    lineHeight: "40px"
+  display:
+    fontFamily: "Manrope"
+    fontSize: "44px"
+    lineHeight: "50px"
     fontWeight: 500
-  title:
-    fontSize: "28px"
-    lineHeight: "36px"
+    letterSpacing: "-1.1px"
+  headline:
+    fontFamily: "Manrope"
+    fontSize: "34px"
+    lineHeight: "42px"
+    fontWeight: 500
+    letterSpacing: "-0.7px"
+  wordmark:
+    fontFamily: "Manrope"
+    fontSize: "21px"
+    lineHeight: "28px"
+    fontWeight: 600
+    letterSpacing: "-0.4px"
+  lead:
+    fontFamily: "Instrument Sans"
+    fontSize: "19px"
+    lineHeight: "29px"
+    fontWeight: 400
+  quote:
+    fontFamily: "Instrument Sans"
+    fontSize: "19px"
+    lineHeight: "28px"
+    fontWeight: 400
+  button:
+    fontFamily: "Instrument Sans"
+    fontSize: "18px"
     fontWeight: 600
   body:
+    fontFamily: "Instrument Sans"
     fontSize: "17px"
     lineHeight: "26px"
-  supporting:
-    fontSize: "16px"
-    lineHeight: "24px"
-  button:
-    fontSize: "16px"
+    fontWeight: 400
+  status:
+    fontFamily: "Instrument Sans"
+    fontSize: "17px"
     lineHeight: "24px"
     fontWeight: 600
+  tab:
+    fontFamily: "Instrument Sans"
+    fontSize: "17px"
+    fontWeight: 500
+  input:
+    fontFamily: "Instrument Sans"
+    fontSize: "16px"
+    fontWeight: 400
+  hint:
+    fontFamily: "Instrument Sans"
+    fontSize: "15px"
+    lineHeight: "22px"
+    fontWeight: 400
   label:
+    fontFamily: "Instrument Sans"
     fontSize: "14px"
     lineHeight: "20px"
     fontWeight: 600
-  caption:
-    fontSize: "13px"
+  detail:
+    fontFamily: "Instrument Sans"
+    fontSize: "14px"
     lineHeight: "20px"
-  input:
-    fontSize: "16px"
+    fontWeight: 400
+  caption:
+    fontFamily: "Instrument Sans"
+    fontSize: "13px"
+    lineHeight: "18px"
+    fontWeight: 400
 rounded:
-  input: "4px"
-  button: "8px"
+  input: "8px"
+  block: "12px"
 spacing:
+  "4": "4px"
   "8": "8px"
   "12": "12px"
   "16": "16px"
   "24": "24px"
-  "32": "32px"
+  "28": "28px"
+  "40": "40px"
   "48": "48px"
 components:
-  button-primary-light:
-    backgroundColor: "{colors.light-primary}"
-    textColor: "{colors.light-on-primary}"
+  button-primary:
+    backgroundColor: "{colors.accent}"
+    textColor: "{colors.on-accent}"
     typography: "{typography.button}"
-    rounded: "{rounded.button}"
-    padding: "16px 24px"
-  button-primary-dark:
-    backgroundColor: "{colors.dark-primary}"
-    textColor: "{colors.dark-on-primary}"
+    rounded: "{rounded.block}"
+    padding: "0 24px"
+    height: "64px"
+  button-primary-pressed:
+    backgroundColor: "{colors.accent-pressed}"
+    textColor: "{colors.on-accent}"
+  button-neutral:
+    backgroundColor: "{colors.raised}"
+    textColor: "{colors.strong}"
     typography: "{typography.button}"
-    rounded: "{rounded.button}"
-    padding: "16px 24px"
-  button-text-light:
-    textColor: "{colors.light-primary}"
-    typography: "{typography.button}"
-    padding: "12px 0"
-  button-text-dark:
-    textColor: "{colors.dark-primary}"
-    typography: "{typography.button}"
-    padding: "12px 0"
-  input-light:
-    backgroundColor: "{colors.light-input}"
-    textColor: "{colors.light-text}"
+    rounded: "{rounded.block}"
+    padding: "0 24px"
+    height: "64px"
+  button-neutral-pressed:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.strong}"
+  button-small:
+    backgroundColor: "{colors.raised}"
+    textColor: "{colors.strong}"
+    rounded: "{rounded.block}"
+    padding: "0 20px"
+    height: "48px"
+  preset-tab:
+    textColor: "{colors.muted}"
+    typography: "{typography.tab}"
+    height: "48px"
+  preset-tab-selected:
+    textColor: "{colors.strong}"
+  input:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.text}"
     typography: "{typography.input}"
     rounded: "{rounded.input}"
-  input-dark:
-    backgroundColor: "{colors.dark-input}"
-    textColor: "{colors.dark-text}"
-    typography: "{typography.input}"
-    rounded: "{rounded.input}"
+    padding: "0 16px"
+    height: "56px"
+  message-quote:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text}"
+    typography: "{typography.quote}"
+    rounded: "{rounded.block}"
+    padding: "20px"
 ---
 
-# Design System: Phone voice
+# Design System: Tandem
 
 ## Overview
 
-**Creative North Star: "Restrained Android utility"**
+**Creative North Star: "Two voices, one thumb"**
 
-This is the implemented utility direction from PRODUCT.md, not a final product identity. A flat green surface, plain system text, and a single filled action keep the interface direct. Status and controls carry the visual hierarchy; decoration does not.
+Tandem is a near-black, dark-only Android app in the Boson AI design system. Each screen is a quiet canvas with one large question or headline, and every control sits at the bottom near the thumb. Green is rare and means one of two things: the action to take, or a session that is live.
 
-The source of truth is `mobile/App.tsx`. The light, dark, and enlarged-text Pixel captures in `.impeccable/review/` support the visual review disposition of SHIP. They establish the rendered idle interface, not acceptance of live voice, correction timing, or speaker echo cancellation.
+The mark tells the story. A white dot is you. A signal-green arc beside it is Tandem, listening and answering. The source of truth is `mobile/App.tsx`. The Paper design file is the "Tandem app" page in "Boson AI Design System" (https://app.paper.design/file/01M5B4ADQSXTWS4JWY87EBYE4C/p-5-0).
+
+Rendered evidence in `.impeccable/review/`: home while unpaired (`tandem-emulator-5554.png`), Settings (`tandem-settings.png`), and home at 1.3x font scale (`tandem-large.png`). The Live, Working and Confirm states exist in code but were not captured on a device, because no server was available.
 
 **Key Characteristics:**
-- One scrolling column with native safe areas and scalable text.
-- Coordinated light and dark semantic roles.
-- Filled primary action, plain text actions, and tonal input fields.
-- Minimal copy, no decorative cards or pills, and no continuous animation.
+- Dark only. No light scheme.
+- Bottom-weighted screens. Content sits low, actions sit lowest.
+- Green only for the primary action and a live session.
+- Information sits directly on the canvas. The message quote is the only enclosed block.
+- No shadows, gradients, section rules, or continuous animation.
 
 ## Colors
 
-Green runs through both schemes, with a darker action in light mode and a pale mint action in dark mode. The frontmatter records every role exactly as defined in the source `schemes` object.
+Cool near-black neutrals from the Boson foundations, with one signal green.
 
 ### Primary
+- **Signal Green** (accent): fill of the full-width primary button, the live dot and live state text, Working and Done status text, the selected preset underline, input focus border, text selection, "Turn on" permission actions, and the Paired check.
+- **Pressed Green** (accent-pressed): primary button while pressed.
+- **Ink on Green** (on-accent): label and icon on the primary button. Same value as the canvas.
 
-- **Deep green / pale mint** (`light-primary`, `dark-primary`): filled actions and text actions.
-- **White / dark green action text** (`light-on-primary`, `dark-on-primary`): text on the filled action.
+### Secondary
+- **Sage** (green-soft): Settings section labels ("Permissions", "Connection") and the "Paired" text. A calm green for structure, never for action.
 
 ### Neutral
+- **Canvas** (canvas): the whole app background, also the app and splash background.
+- **Surface** (surface): the message quote block, and the pressed state of neutral buttons.
+- **Raised** (raised): the Stop button and the Save button at rest.
+- **Strong** (strong): display, headline, wordmark, selected tab, row titles, button labels, and the white dot in the mark.
+- **Text** (text): input values, Tandem's spoken reply, quoted message, back arrow, stop glyph.
+- **Secondary** (secondary): lead, body, preset hint, field labels, the settings icon, and the "On" permission state.
+- **Muted** (muted): captions, unselected tabs, row details, quote meta, placeholders, the "Tandem" reply label.
+- **Control Border** (control-border): 1px outline of inputs at rest.
+- **Error** (error): error text only, and Blocked or Unknown task status.
 
-- **Pale green / forest surface** (`light-surface`, `dark-surface`): the full app background.
-- **Dark green / pale green text** (`light-text`, `dark-text`): title, session state, request, transcript, and field labels.
-- **Muted green / soft sage supporting text** (`light-secondary`, `dark-secondary`): explanation, disclosure, progress, and placeholders. This is a text role, not a second accent.
-- **Light / dark tonal input fill** (`light-input`, `dark-input`): connection fields without decorative outlines.
-
-The error roles (`light-error`, `dark-error`) identify recoverable problems in body text.
-
-**The Paired Roles Rule.** Switch the complete scheme with the device appearance; retain the matching on-primary text when changing the action fill.
+**The Two Greens Rule.** Signal green marks the primary action and a live session. Stop is neutral (raised), never green or red. Anything structural that wants green uses sage.
 
 ## Typography
 
-**Font:** Native Android system font. The implementation sets no font family, tracking, or custom display face. Unspecified weights and input line height remain platform defaults.
+**Display Font:** Manrope 500 and 600 (bundled with expo-font)
+**Body Font:** Instrument Sans 400, 500 and 600 (bundled with expo-font)
 
-The frontmatter uses `px` for portable previews. In React Native, the corresponding numeric layout values are logical units and text follows native font scaling. The eight role names map directly to source styles; this is a functional ramp rather than a geometric scale.
+**Character:** Manrope sets the large question and headlines with tight negative tracking. Instrument Sans carries everything you read or tap.
 
 ### Hierarchy
+- **Display:** the home question, "What do you need help with?".
+- **Headline:** Live screen. What you said, the current goal, or "Send this to {name}?".
+- **Wordmark:** "Tandem" in the top bar, and the "Settings" title.
+- **Lead:** the line under the home question.
+- **Quote:** the message text inside the confirmation block.
+- **Button:** labels on full-width buttons. The small Save button uses the same face at 16px.
+- **Body:** task detail, spoken yes/no instruction, Tandem's reply, errors.
+- **Status:** task state line on Live (Working, Done, Blocked), colored by state.
+- **Tab:** preset names.
+- **Input:** server address and pairing code values.
+- **Hint:** the one-line description under the selected preset.
+- **Label:** section labels in Settings (in sage) and the "Tandem" reply label (in muted).
+- **Detail:** row details, quote meta, field labels.
+- **Caption:** centered 13px line under the main button, and the left-aligned about line in Settings.
 
-- **Headline:** the largest role, used for current session state.
-- **Title:** the app title, smaller than the session headline and slightly heavier.
-- **Body:** instructions, requests, progress, transcript, and errors.
-- **Supporting:** the short introductory sentence.
-- **Button:** primary and text action labels, centered only on filled actions.
-- **Label:** field labels and identifiers for request and transcript content.
-- **Caption:** the audio and agent disclosure.
-- **Input:** editable connection values with native line metrics.
-
-**The Native Scaling Rule.** Let text wrap and the page scroll as the system text setting grows; the build does not truncate these roles or impose fixed text containers.
+**The Scale With The User Rule.** Text follows Android font scale. At 1.3x the home screen still fits, the question wraps and the bottom stack stays intact.
 
 ## Layout
 
-A single flex-growing ScrollView uses a shared horizontal inset (`spacing.24`). There is no breakpoint, width cap, alternate grid, or app-owned navigation bar. Android Back remains native.
+One portrait column inside a ScrollView with safe-area padding (bottom inset plus 24). Horizontal inset is 24 everywhere.
 
-Safe-area padding is computed at runtime: top inset plus 20 logical units, bottom inset plus `spacing.24`. KeyboardAvoidingView uses height adjustment, and taps remain handled while the keyboard is visible. Status-bar content switches with the scheme.
+Every screen has the same skeleton, top to bottom:
+1. **Top bar**, 64 tall. Mark and wordmark on the left (8 gap), a 48dp icon button on the right.
+2. **Main area** that grows to fill space and pushes its content to the bottom (48 top, 40 bottom, 16 gap; 24 gap on Live).
+3. **Controls**: preset tabs (28 gap) with the hint 12 below, on Home only.
+4. **Actions**, 24 above: one full-width 64-tall button, then a centered caption 16 below.
 
-The introductory line starts after `spacing.8`. The session group starts after `spacing.48`, uses `spacing.12` between its text, and ends with `spacing.24`. Subsequent sections use `spacing.32` above and `spacing.8` within. Fields add `spacing.16` above. The assistant transcript label also receives `spacing.16` above. Primary actions and disclosure use `spacing.12` above.
+Screens:
+- **Home:** display question and lead at the bottom of the main area, then presets, then "Start talking" (with mic icon) or "Pair this phone" when unpaired.
+- **Live:** the top bar swaps the settings icon for an 8px green dot and live state text ("Listening", "Waiting for you"). Headline, then a status line colored by task state, task detail, and Tandem's reply. For a message confirmation: headline, the message quote block, and a spoken instruction ("Say yes to send, or no to change it"). There are no confirm buttons; the answer is spoken. Stop is the single action.
+- **Settings:** back arrow and title in the top bar. Permissions rows (72 min height) with trailing "On" or "Turn on". Connection section 40 below with labeled inputs, then a row with "Paired" on the left and a small Save button on the right. The about caption sits at the bottom.
+
+**The Thumb Rule.** The main area grows and the content falls to the bottom. Never pin content to the top and leave the bottom empty.
 
 ## Elevation & Depth
 
-There are no shadows, elevation values, gradients, borders, or section rules in the app styles. Input fill and the solid primary action provide the tonal separation; other content stays on the shared surface. The native system status and gesture areas are not app-owned components.
+Flat. No shadows, no elevation, no gradients, no section rules. Depth comes from three tonal steps: canvas, surface, raised. Raised is for neutral buttons, surface for the quote block and pressed states.
 
-**The Flat Utility Rule.** Separate content with spacing and text hierarchy; preserve the confirmed absence of decorative cards, pills, and section rules.
+**The Open Canvas Rule.** Information sits directly on the canvas. The message quote is the only enclosed block, because it shows words Tandem is about to send for you.
 
 ## Shapes
 
-Controls have modest corners: the filled button uses `rounded.button`, while fields use the tighter `rounded.input`. Content sections have no enclosing shape. The filled button has a minimum height of 56 logical units and can grow with its label; text actions have a minimum height of 48. Inputs also have a minimum height of 56. These are minimums, not fixed-height tokens.
+Soft corners on controls and blocks (12) and tighter corners on inputs (8). The stop glyph is a 14px square with 3 corners. The live dot is a circle.
+
+The mark is drawn in a 108 viewBox: a white circle (cx 44, cy 54, r 11) and a green arc `M60.7 34.1 A26 26 0 0 1 60.7 73.9` with a 10 stroke and round caps. The in-app lockup crops the viewBox to `28 28 52 52` and renders it at 22. The notification icon `ic_tandem.xml` is the same geometry in white only, 24dp, cropped the same way. The launcher uses an adaptive icon with foreground, background and monochrome layers.
 
 ## Components
 
 ### Buttons
+- **Shape:** 12 corners, 64 tall, full width, 10 gap between icon and label.
+- **Primary:** signal green fill, ink label. Darker green while pressed. "Start talking" carries a 22px mic icon.
+- **Neutral:** raised fill, strong label, surface while pressed. Used for Stop, with a stop glyph.
+- **Small:** raised Save button, 48 tall, 20 side padding, 16px label.
+- **Disabled:** 40% opacity.
+- **Icon button:** 48 square with a 24px line icon (1.75 stroke).
 
-The filled action is full column width, center aligned, and uses the active scheme's primary and on-primary pair. Padding and radius come from the component tokens. Start changes to Stop during a session. The Start/Stop Pressable uses opacity 0.75 while pressed and 0.45 when unconfigured; it is disabled when unconfigured and inactive. Save connection shares the filled style but has no custom pressed-opacity callback.
+### Preset tabs
+- **Style:** text tabs, 48 tall, 2px underline. Not pills.
+- **State:** selected is strong text with a green underline. Others are muted with a clear underline. Exposed as a radio group.
 
-Permission and connection actions are left-aligned text in the primary color. They use vertical padding (`spacing.12`) and no decorative container. The source defines no custom hover or focus styling; native platform behavior applies. There are no animated state transitions.
+### Inputs
+- **Style:** transparent on the canvas, 1px control-border outline, 8 corners, 56 min height, 16 side padding. Label sits above in secondary.
+- **Focus:** the border turns signal green. Selection is green.
+- **Error:** error text below the fields.
 
-### Inputs / Fields
+### Permission rows
+Title in strong, detail in muted, trailing state 72 wide and right aligned. "Turn on" is green and opens Android settings. "On" is secondary.
 
-Connection fields use the scheme's input fill, text role, secondary placeholder role, and input radius. Horizontal padding is `spacing.16`; vertical text metrics remain native. Each field has a visible label and accessibility label. The address field uses URL entry without capitalization or correction. The pairing field masks its value. Connection setup is a disclosure that closes after saving.
+### Message quote
+Surface fill, 12 corners, 20 padding, 8 gap. Meta line in muted ("WhatsApp · Mom"), message in quote type. Selectable.
 
-### Session and transcript
-
-The session state is a polite live region with a headline and supporting body. Errors use the error color and an alert role. Request and transcript groups remain plain text on the surface. Transcript content is selectable. Group labels describe actual content; they are not decorative kickers.
-
-The sidecar provides HTML/CSS previews of the two button variants and input in each scheme. These translate native styles for inspection; browser system fonts and default focus indicators are preview adapters, not additional Android tokens. No tonal ramps, shadow tokens, motion timings, or breakpoints are inferred.
+### Live indicator
+8px green dot plus 15px green state text in the top bar. Static, no pulse.
 
 ## Do's and Don'ts
 
 ### Do:
-
-- **Do** use the complete light or dark role set, including its on-primary text.
-- **Do** preserve native text scaling, wrapping, scrolling, and safe-area padding.
-- **Do** retain minimum touch heights while allowing content to grow.
-- **Do** show status and recoverable errors as readable text.
+- **Do** keep one full-width primary action per screen, at the bottom.
+- **Do** use sage for structure and signal green for action or live state.
+- **Do** keep Stop neutral.
+- **Do** ask for confirmation by voice, with a spoken yes/no instruction under the quote.
+- **Do** keep touch targets at 48 or more.
 
 ### Don't:
-
-- **Don't** add decorative cards, pills, or section rules.
-- **Don't** add continuous animation.
-- **Don't** turn this utility direction into a final brand or audience commitment.
-- **Don't** treat idle screenshots as proof of live voice acceptance.
+- **Don't** add a light theme.
+- **Don't** add shadows, gradients, cards, pills, or rules between sections.
+- **Don't** add pulsing, shimmering, or spinning animation, including on the live dot.
+- **Don't** add confirm buttons to the Confirm state.
+- **Don't** use green for decoration or for neutral information.
+- **Don't** treat the idle screenshots as proof that Live or Confirm render correctly on device.

@@ -149,7 +149,7 @@ class RimOverlay(private val context: Context) {
       alpha = min(0.8f, context.getSystemService(InputManager::class.java).maximumObscuringOpacityForTouch)
       layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
       fitInsetsTypes = 0
-      title = "Phone voice overlay"
+      title = "Tandem overlay"
     }
     glow.windowAlpha = params.alpha
     try { windows.addView(root, params) } catch (_: Exception) { return }

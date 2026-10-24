@@ -1,4 +1,4 @@
-# Phone voice
+# Tandem
 
 MODE: Operate. One Android phone screen, code-first.
 
@@ -6,7 +6,7 @@ PURPOSE: Start or stop live voice; see the latest request and observed task prog
 
 FORM: Native Android utility. The user's pinned constraints govern the composition: minimal copy, no decorative cards or pills, no section rules, and no continuous animation. Seed: seed:1cee525a035e3c7a. The user delegated implementation choices; no new product or brand claim was inferred.
 
-LAYOUT: Safe-area app title; session state and primary Start/Stop button; latest request; latest spoken user and assistant text; permission and connection setup below. Setup uses standard labeled text fields. System Back remains native.
+LAYOUT: Three views. Home: lockup and settings icon, then a bottom-weighted question, preset tabs, and Start talking. Live: live state in the top bar, the current request as the headline, one status line, Tandem's last reply, and Stop. Confirming a message shows the exact message and recipient and asks for a spoken yes or no. Settings (behind the icon, Back returns): permissions and connection. Paper source: https://app.paper.design/file/01M5B4ADQSXTWS4JWY87EBYE4C/p-5-0
 
 FIRST VIEWPORT: The microphone state and Start/Stop action dominate. Disclosure appears beside the activation flow. Idle content is a quoted example, not a claim of a completed task.
 

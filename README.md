@@ -36,10 +36,13 @@ reports whether Portal is connected. API keys stay in the controller; the app
 and Portal use a scoped device pairing token.
 
 1. Pair Portal's Custom Connection with the server's `/device` WebSocket endpoint.
-2. Save the HTTPS server address and device pairing code in Phone voice.
-3. Optionally enable instant brightness control through Android's normal settings permission screen.
-4. Tap **Start listening**, allow microphone access, and speak. **Stop listening**
-   or the notification's **Stop** ends the native service and microphone.
+2. In Tandem, tap **Pair this phone** (or the settings icon) and save the HTTPS
+   server address and device pairing code.
+3. Optionally turn on instant brightness control and showing over other apps in
+   the same Settings screen.
+4. Pick Quick, Family, or Hands-free, tap **Start talking**, allow microphone
+   access, and speak. **Stop** or the notification's **Stop** ends the native
+   service and microphone.
 
 The first demo is “Set brightness to 70% and turn on Night Light,” followed
 mid-task by “Actually, leave Night Light off.” Physical speech, background audio,
