@@ -83,8 +83,9 @@ export function targetIsCurrent(candidate: ActionCandidate, before: PhoneObserva
   if (!candidate.element) return true;
   const identity = JSON.stringify(target(candidate.element));
   const matches = current.elements.filter(element => JSON.stringify(target(element)) === identity);
-  if (matches.length !== 1) return false;
-  if (JSON.stringify(lineage(candidate.element, before)) !== JSON.stringify(lineage(matches[0]!, current))) return false;
+  const [match] = matches;
+  if (matches.length !== 1 || !match) return false;
+  if (JSON.stringify(lineage(candidate.element, before)) !== JSON.stringify(lineage(match, current))) return false;
   const live = actionCandidates(current, context).filter(item => item.element?.index === matches[0]?.index
     && JSON.stringify(item.action) === JSON.stringify(candidate.action)
     && JSON.stringify(item.effect) === JSON.stringify(candidate.effect));
@@ -96,7 +97,7 @@ export async function readStableScreen(portal: PhoneControl, signal: AbortSignal
   const observation = await portal.state();
   let fingerprint = frame(observation);
   let stableSince = performance.now();
-  while (performance.now() - started < 2_000) {
+  while (performance.now() - started < 5_000) {
     await delay(60, undefined, { signal });
     const next = await portal.state();
     const nextFingerprint = frame(next);
@@ -105,7 +106,7 @@ export async function readStableScreen(portal: PhoneControl, signal: AbortSignal
     else if (now - stableSince >= 100 && now - started >= minimumMs) return next;
     fingerprint = nextFingerprint;
   }
-  throw new Error('The screen did not settle within two seconds; no decision dispatched.');
+  throw new Error('The foreground or display frame did not settle within five seconds; no decision dispatched.');
 }
 
 export function actionCandidates(observation: PhoneObservation, context: CandidateContext = {}): ActionCandidate[] {

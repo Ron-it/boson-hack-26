@@ -22,4 +22,6 @@ export type InputValue = z.infer<typeof inputValueSchema>;
 
 /** A selection the operator actually dispatched, used with a fresh viewer observation, never alone. */
 export type ContentSelection = { packageName: string; name: string; viewer: 'image' };
-export type OutcomeEvidence = { kind: 'search_results' | 'content_opened'; packageName: string; detail: string };
+export type OutcomeEvidence =
+  | { kind: 'search_results'; packageName: string; query: string; matches: string[]; detail: string }
+  | { kind: 'content_opened'; packageName: string; selection: ContentSelection; resourceId: string; detail: string };

@@ -8,7 +8,7 @@ export const providerSchema = z.enum(['gemini', 'jev', 'openai-decisions', 'open
 
 type DecisionInput = {
   goal: string;
-  request?: WorkflowRequest & { app?: string | undefined; recipient?: string | undefined; message?: string | undefined };
+  request?: WorkflowRequest & { app?: string | undefined; recipient?: string | undefined; message?: string | undefined; brightness?: number | undefined; nightLight?: boolean | undefined };
   screenshot?: Uint8Array;
   observation: PhoneObservation;
   candidates: ActionCandidate[];
@@ -33,6 +33,7 @@ function decisionContext(input: DecisionInput) {
     goal: input.goal,
     request: {
       app: input.request?.app ?? null, recipient: input.request?.recipient ?? null, message: input.request?.message ?? null,
+      brightness: input.request?.brightness ?? null, nightLight: input.request?.nightLight ?? null,
       values: input.request?.values ?? [], outcome: input.request?.outcome ?? null,
     },
     app: input.observation.app,

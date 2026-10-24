@@ -102,7 +102,7 @@ function files(packageName: string): AppCapability {
       if (!observation.elements.some(element => owns(element, 'search_src_text') && element.editable && element.text === query)) return undefined;
       const names = images(observation).map(image => image.name).filter(name => name.toLowerCase().includes(query.toLowerCase()));
       if (!names.length) return undefined;
-      return { kind: 'search_results', packageName, detail: `Files search ${JSON.stringify(query)} shows ${names.slice(0, 3).join(', ')}.` };
+      return { kind: 'search_results', packageName, query, matches: names, detail: `Files search ${JSON.stringify(query)} shows ${names.slice(0, 3).join(', ')}.` };
     },
   };
 }
@@ -114,7 +114,9 @@ const photosViewer: AppCapability = {
   outcome(observation, request, selection) {
     if (request.outcome?.kind !== 'content_opened' || selection?.name !== request.outcome.name || selection.viewer !== 'image') return undefined;
     if (!observation.elements.some(element => element.resourceId === 'com.google.android.apps.photos:id/photos_photofragment_components_background_photo_view' && element.role === 'ImageView' && /^Photo taken on /.test(element.description))) return undefined;
-    return { kind: 'content_opened', packageName: observation.app.packageName, detail: `Opened the selected ${JSON.stringify(selection.name)} in the photo viewer.` };
+    return { kind: 'content_opened', packageName: observation.rootPackage, selection,
+      resourceId: 'com.google.android.apps.photos:id/photos_photofragment_components_background_photo_view',
+      detail: `Opened the selected ${JSON.stringify(selection.name)} in the photo viewer.` };
   },
 };
 

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { z } from 'zod';
 import { PhoneTask, type TaskStatus } from '../src/server/task.ts';
 import { parseObservation, type PhoneControl } from '../src/mobile/portal.ts';
 
@@ -26,6 +27,9 @@ test('the public operator searches an app with requested text and reports fresh 
   assert.deepEqual(typed, ['Boson-Test']);
   assert.equal(statuses.at(-1)?.state, 'completed');
   assert.match(statuses.at(-1)?.detail ?? '', /Boson-Test-Mountain.png/);
+  const evidence = statuses.at(-1)?.evidence;
+  assert.equal(evidence?.kind, 'search_results');
+  assert.ok(evidence?.kind === 'search_results' && evidence.matches.includes('Boson-Test-Mountain.png'));
 });
 
 test('live unrelated content does not prevent a current search target from being used', async () => {
@@ -147,10 +151,10 @@ test('device observations refresh display geometry when a rotated dialog still f
   });
   try {
     const first = await phone.call('look_at_screen', { question: 'What is on screen?' });
-    assert.deepEqual((first as { display: unknown }).display, { width: 2400, height: 1080 });
+    assert.deepEqual(z.object({ display: z.unknown() }).parse(first).display, { width: 2400, height: 1080 });
     landscape = false;
     const second = await phone.call('look_at_screen', { question: 'What is on screen now?' });
-    assert.deepEqual((second as { display: unknown }).display, { width: 1080, height: 2400 });
+    assert.deepEqual(z.object({ display: z.unknown() }).parse(second).display, { width: 1080, height: 2400 });
   } finally { await phone.close(); }
 });
 
@@ -189,4 +193,29 @@ test('a field reused in a changed parent context is not treated as the old targe
   await task.submit(request);
   assert.deepEqual(typed, []);
   assert.equal(decisions, 2);
+});
+
+test('a generic app outcome is retained when a mixed native request needs an order', async () => {
+  const statuses: TaskStatus[] = [];
+  let commands = 0;
+  const phone = control(async () => screen([search('')]));
+  await new PhoneTask(phone, status => statuses.push(status), {}, { decide: async () => ({ actionId: 'blocked', confidence: null, returnedModel: null }) }, async () => {
+    commands++;
+    return { status: 'completed', stream: 'media', requestedPercent: 40, requestedIndex: 6, observedIndex: 6, minIndex: 0, maxIndex: 15 };
+  }).submit({ ...request, app: undefined, mediaVolume: 40 });
+  assert.equal(statuses.at(-1)?.state, 'question');
+  assert.equal(commands, 0);
+});
+
+test('an unexpected unsupported dialog produces a grounded handoff without typing or confirming it', async () => {
+  let mutations = 0;
+  const statuses: TaskStatus[] = [];
+  const phone = control(async () => screen([node({ resourceId: 'com.google.android.documentsui:id/alertTitle', text: 'New folder' }), node({ resourceId: 'android:id/text1', className: 'android.widget.EditText', text: 'Name', isEditable: true, isClickable: true }), node({ resourceId: 'android:id/button1', text: 'OK', isClickable: true })]), { tap: async () => { mutations++; }, typeText: async () => { mutations++; } });
+  await new PhoneTask(phone, status => statuses.push(status), {}, { decide: async ({ candidates }) => {
+    assert.equal(candidates.some(candidate => candidate.element?.resourceId === 'android:id/button1'), false);
+    return { actionId: 'blocked', confidence: null, returnedModel: null };
+  } }).submit({ instruction: 'Finish this folder screen', app: 'Files' });
+  assert.equal(mutations, 0);
+  assert.equal(statuses.at(-1)?.state, 'blocked');
+  assert.match(statuses.at(-1)?.detail ?? '', /New folder/);
 });
