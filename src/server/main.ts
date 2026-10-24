@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 import WebSocket, { WebSocketServer } from 'ws';
 import { DeviceConnection } from './device.ts';
 import { VoiceSession } from './voice.ts';
+import { parsePreset, presets } from './presets.ts';
 
 const token = process.env.DEVICE_TOKEN;
 if (!token || token.length < 24) throw new Error('Set a random DEVICE_TOKEN of at least 24 characters');
@@ -17,7 +18,8 @@ server.on('upgrade', (request, socket, head) => {
   const credential = request.headers.authorization?.replace(/^Bearer /, '') || '';
   const a = Buffer.from(credential);
   const b = Buffer.from(token);
-  const path = new URL(request.url || '/', 'http://localhost').pathname;
+  const url = new URL(request.url || '/', 'http://localhost');
+  const path = url.pathname;
   if (a.length !== b.length || !timingSafeEqual(a, b) || !['/device', '/session'].includes(path)) {
     socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n'); return;
   }
@@ -35,7 +37,9 @@ server.on('upgrade', (request, socket, head) => {
       console.log('Phone connected');
     } else if (device) {
       voice?.close('Replaced by a new voice session.');
-      try { voice = new VoiceSession(ws, device); }
+      const preset = parsePreset(url.searchParams.get('preset'));
+      console.log('Voice preset:', preset);
+      try { voice = new VoiceSession(ws, device, process.env, { preset: presets[preset] }); }
       catch { ws.close(1011, 'Voice setup failed'); }
     }
   });

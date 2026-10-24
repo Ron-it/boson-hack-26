@@ -2,6 +2,7 @@ package expo.modules.bosonaudio
 
 import android.app.*
 import android.content.Intent
+import android.net.Uri
 import android.content.pm.PackageManager
 import android.media.*
 import android.media.audiofx.AcousticEchoCanceler
@@ -73,9 +74,10 @@ class VoiceService : Service() {
       val prefs = getSharedPreferences("connection", 0)
       val url = prefs.getString("url", "") ?: ""
       val token = prefs.getString("token", "") ?: ""
+      val preset = Uri.encode(prefs.getString("preset", "quick") ?: "quick")
       check(url.startsWith("https://") && token.length >= 24) { "Set the server address and pairing code" }
       emit("connecting", "Connecting to Boson")
-      socket = client.newWebSocket(Request.Builder().url(url.replaceFirst("https://", "wss://") + "/session").header("Authorization", "Bearer $token").build(), object : WebSocketListener() {
+      socket = client.newWebSocket(Request.Builder().url(url.replaceFirst("https://", "wss://") + "/session?preset=$preset").header("Authorization", "Bearer $token").build(), object : WebSocketListener() {
         override fun onMessage(webSocket: WebSocket, text: String) {
           try { onServerEvent(JSONObject(text)) } catch (error: Exception) { fail(error.message ?: "Invalid voice event") }
         }

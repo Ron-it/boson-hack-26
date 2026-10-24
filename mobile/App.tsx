@@ -35,6 +35,13 @@ function reduceSession(state: typeof initialSession, event: Event) {
   return state;
 }
 
+const presets = [
+  { id: 'quick', label: 'Quick', hint: 'Short and fast.' },
+  { id: 'family', label: 'Family', hint: 'Patient, and speaks your language.' },
+  { id: 'hands_free', label: 'Hands-free', hint: 'Does the tapping for you.' },
+] as const;
+const presetSchema = z.enum(presets.map(preset => preset.id)).catch('quick');
+
 const schemes = {
   light: { surface: '#F4F8F5', text: '#142D28', secondary: '#47645B', primary: '#006B55', onPrimary: '#FFFFFF', input: '#E4EEE7', error: '#A32225' },
   dark: { surface: '#10251F', text: '#E2F2E7', secondary: '#ADCABB', primary: '#7BDBB5', onPrimary: '#00382A', input: '#203C31', error: '#FFB4AB' },
@@ -48,6 +55,7 @@ function PhoneScreen() {
   const [url, setUrl] = useState(config.url);
   const [token, setToken] = useState('');
   const [setup, setSetup] = useState(!config.configured);
+  const [preset, setPreset] = useState(() => presetSchema.parse(config.preset));
   const [brightness, setBrightness] = useState(() => Audio.canSetBrightness());
   const [overlay, setOverlay] = useState(() => Audio.canShowOverlay());
 
@@ -75,7 +83,7 @@ function PhoneScreen() {
       const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
       if (granted !== PermissionsAndroid.RESULTS.GRANTED) throw new Error('Allow the microphone to start a voice session.');
       if (Number(Platform.Version) >= 33) await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
-      Audio.start();
+      Audio.start(preset);
     } catch (error) { dispatch({ type: 'notice', message: error instanceof Error ? error.message : 'Could not start the session.' }); }
   };
   const save = () => {
@@ -93,6 +101,12 @@ function PhoneScreen() {
         <Text style={[styles.body, { color: colors.secondary }]}>{!session.active ? 'Try “Help me with this” or “Turn on Night Light.”' : session.mode === 'guide' ? 'Showing you how. I won’t touch the phone.' : 'Your microphone stays on in other apps. You can interrupt at any time.'}</Text>
         {!!session.screen && <Text style={[styles.body, { color: colors.text }]}>{session.screen}</Text>}
       </View>
+      {!session.active && <View accessibilityRole="radiogroup" style={styles.presets}>
+        {presets.map(option => <Pressable key={option.id} accessibilityRole="radio" accessibilityState={{ checked: preset === option.id }} onPress={() => setPreset(option.id)} style={styles.preset}>
+          <Text style={[styles.buttonText, { color: preset === option.id ? colors.primary : colors.text }]}>{preset === option.id ? '● ' : '○ '}{option.label}</Text>
+          <Text style={[styles.caption, { color: colors.secondary, marginTop: 0 }]}>{option.hint}</Text>
+        </Pressable>)}
+      </View>}
       {!!session.error && <Text accessibilityRole="alert" style={[styles.body, { color: colors.error }]}>{session.error}</Text>}
       <Pressable accessibilityRole="button" disabled={!config.configured && !session.active} onPress={session.active ? () => Audio.stop() : start} style={({ pressed }) => [styles.primary, { backgroundColor: colors.primary, opacity: pressed ? 0.75 : !config.configured ? 0.45 : 1 }]}>
         <Text style={[styles.buttonText, { color: colors.onPrimary }]}>{session.active ? 'Stop listening' : 'Start listening'}</Text>
@@ -137,6 +151,8 @@ const styles = StyleSheet.create({
   primary: { minHeight: 56, paddingHorizontal: 24, paddingVertical: 16, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginTop: 12 },
   buttonText: { fontSize: 16, lineHeight: 24, fontWeight: '600' },
   section: { marginTop: 32, gap: 8 },
+  presets: { marginBottom: 8 },
+  preset: { minHeight: 48, justifyContent: 'center', paddingVertical: 8 },
   label: { fontSize: 14, lineHeight: 20, fontWeight: '600' },
   textButton: { minHeight: 48, justifyContent: 'center', paddingVertical: 12 },
   fields: { gap: 8, paddingTop: 16 },

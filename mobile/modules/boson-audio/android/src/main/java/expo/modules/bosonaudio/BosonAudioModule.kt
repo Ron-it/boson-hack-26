@@ -16,7 +16,7 @@ class BosonAudioModule : Module() {
     Function("snapshot") { VoiceState.snapshot() }
     Function("configuration") {
       val prefs = appContext.reactContext!!.getSharedPreferences("connection", 0)
-      mapOf("url" to prefs.getString("url", ""), "configured" to !prefs.getString("token", "").isNullOrBlank())
+      mapOf("url" to prefs.getString("url", ""), "configured" to !prefs.getString("token", "").isNullOrBlank(), "preset" to prefs.getString("preset", "quick"))
     }
     Function("configure") { url: String, token: String ->
       require(url.startsWith("https://")) { "Use an https server address" }
@@ -33,9 +33,10 @@ class BosonAudioModule : Module() {
       val context = appContext.reactContext!!
       context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
-    Function("start") {
+    Function("start") { preset: String ->
       val context = appContext.reactContext!!
       check(appContext.currentActivity != null) { "Open the app to start listening" }
+      context.getSharedPreferences("connection", 0).edit().putString("preset", preset).apply()
       context.startForegroundService(Intent(context, VoiceService::class.java))
     }
     Function("stop") {
