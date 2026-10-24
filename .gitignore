@@ -10,3 +10,5 @@ mobile/.expo/
 mobile/modules/*/android/build/
 mobile/modules/*/android/.gradle/
 .impeccable/review/
+.local/
+prototypes/
