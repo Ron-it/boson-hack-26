@@ -126,3 +126,26 @@ test('stop discards the old goal and permits a new explicit request', async () =
   await task.submit({ instruction: 'A new brightness request: 40%', brightness: 40 });
   assert.equal(statuses.at(-1)?.state, 'completed');
 });
+
+test('Night Light enters Settings through Portal when native launch acknowledges without opening', async () => {
+  const statuses: import('../src/server/task.ts').TaskStatus[] = [];
+  const settings: PhoneObservation = {
+    app: { currentApp: 'Settings', packageName: 'com.android.settings', activityName: 'NightDisplaySettingsActivity' },
+    rootPackage: 'com.android.settings', rootBounds: { left: 0, top: 0, right: 1080, bottom: 2400 },
+    screen: { width: 1080, height: 2400, source: 'display' },
+    elements: [{ index: 0, parent: null, resourceId: 'night', className: 'Switch', role: 'Switch', text: 'Night Light', description: '', bounds: { left: 0, top: 0, right: 100, bottom: 100 }, clickable: true, enabled: true, checked: true, state: '', editable: false, scrollable: false, scrollDirections: { up: false, down: false }, range: null }],
+  };
+  let opened = false;
+  let transitioning = false;
+  const phone: PhoneControl = {
+    state: async () => {
+      if (transitioning) { transitioning = false; throw new Error('Portal: No active window or root filtered out'); }
+      return opened ? settings : { ...settings, rootPackage: 'dev.ronit.bosonphone', app: { currentApp: 'Phone voice', packageName: 'dev.ronit.bosonphone', activityName: 'MainActivity' }, elements: [] };
+    },
+    openSettings: async () => { opened = true; transitioning = true; },
+    tap: async () => {}, swipe: async () => {}, back: async () => {}, typeText: async () => {}, launch: async () => {}, packages: async () => [],
+  };
+  const task = new PhoneTask(phone, status => statuses.push(status), {}, { decide: async () => ({ actionId: 'done', confidence: null, returnedModel: null }) }, async () => ({ status: 'opened' }));
+  await task.submit({ instruction: 'Turn Night Light on', nightLight: true });
+  assert.equal(statuses.at(-1)?.state, 'completed', statuses.at(-1)?.detail ?? 'No task status');
+});
