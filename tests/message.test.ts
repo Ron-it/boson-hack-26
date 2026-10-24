@@ -134,14 +134,15 @@ test('an app without supported controls can be opened but none of its controls a
   assert.notEqual(statuses.at(-1)?.state, 'completed');
 });
 
-test('finishing a request without a supported outcome check is not reported as completed', async () => {
+test('finishing a request with no verifiable outcome requested reports the operator result', async () => {
   const app = messagesApp();
   const statuses: TaskStatus[] = [];
   const opener = { decide: async ({ observation, candidates }: Decision) => decided(observation.app.packageName === 'com.google.android.apps.messaging'
     ? candidates.find(candidate => candidate.id === 'done') : candidates.find(candidate => candidate.action.type === 'launch')) };
   const task = new PhoneTask(app.phone, status => statuses.push(status), {}, opener);
   await task.submit({ instruction: 'Open Messages', app: 'Messages' });
-  assert.notEqual(statuses.at(-1)?.state, 'completed');
+  assert.equal(statuses.at(-1)?.state, 'completed');
+  assert.match(statuses.at(-1)?.detail ?? '', /^Done in /);
 });
 
 test('a send whose result is lost is reported unknown and never sent again on continue', async () => {
@@ -276,18 +277,18 @@ test('voice asks with the concrete recipient and message, and sends only after t
   } finally { await phone.close(); }
 });
 
-test('a confirmation queued when the user starts speaking is still asked aloud before it can be approved', async () => {
+test('a confirmation queued while the voice is busy is still asked aloud before it can be approved', async () => {
   const app = messagesApp();
   const phone = await harness(app.portal, { selector: navigator, holdResponses: true });
   try {
-    // Recent user speech keeps the proposal queued until it can be asked aloud.
-    phone.speak();
     await phone.call('update_phone_task', voiceRequest);
-    const proposal = await proposalOf(phone);
+    // The user says something else; its reply is still in progress when the proposal arrives.
     phone.speak();
+    phone.provider({ type: 'response.created', response: { id: 'chatter' } });
+    const proposal = await proposalOf(phone);
     assert.equal(phone.announcements.some(text => text.includes(proposal.id)), false);
     z.object({ status: z.literal('blocked') }).loose().parse(await phone.call('confirm_phone_action', { proposalId: proposal.id, approve: true }));
-    phone.releaseResponses();
+    phone.provider({ type: 'response.done', response: { id: 'chatter', status: 'completed' } });
     await phone.until(() => phone.announcements.find(text => text.includes(proposal.id)), 'the queued confirmation to be asked');
     phone.speak();
     z.object({ status: z.literal('accepted') }).loose().parse(await phone.call('confirm_phone_action', { proposalId: proposal.id, approve: true }));

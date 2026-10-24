@@ -77,8 +77,21 @@ export function progressFingerprint(observation: PhoneObservation) {
     .map(target)]);
 }
 
+const middle = (element: Element) => ({ x: (element.bounds.left + element.bounds.right) / 2, y: (element.bounds.top + element.bounds.bottom) / 2 });
+
 /** Rebuild the allowed operation against the live target, ignoring traversal indices and unrelated content. */
 export function targetIsCurrent(candidate: ActionCandidate, before: PhoneObservation, current: PhoneObservation, context: CandidateContext) {
+  // Generic apps redraw constantly (maps, placeholders, live content). The same control near the same spot is enough;
+  // every action they allow is reversible.
+  if (capabilityFor(current).packageName === '*') {
+    if (before.app.packageName !== current.app.packageName) return false;
+    const element = candidate.element;
+    if (!element) return true;
+    const at = middle(element);
+    return current.elements.some(other => other.text === element.text && other.description === element.description
+      && other.resourceId === element.resourceId && other.role === element.role
+      && Math.abs(middle(other).x - at.x) < 48 && Math.abs(middle(other).y - at.y) < 48);
+  }
   if (frame(before) !== frame(current)) return false;
   if (!candidate.element) return true;
   const identity = JSON.stringify(target(candidate.element));
@@ -143,6 +156,13 @@ export function actionCandidates(observation: PhoneObservation, context: Candida
         description: `Type the requested ${effect.field} ${JSON.stringify(text)} into the field showing ${JSON.stringify(element.text)}. Replaces its text; does not send.`,
         action: { type: 'type', x, y, field: effect.field, text }, element, effect,
       });
+      // Free text: the selector supplies it with the decision, so the menu entry carries none.
+      // Message recipients and wording only ever come from the user's request.
+      else if (effect.field !== 'recipient' && effect.field !== 'message') candidates.push({
+        id: `type_${element.index}_${effect.field}`,
+        description: `Type text you choose into the field showing ${JSON.stringify(element.text || element.description)}. Replaces its text; does not submit. Supply the text.`,
+        action: { type: 'type', x, y, field: effect.field, text: '' }, element, effect,
+      });
     } else if (effect.kind === 'send_message') {
       candidates.push({
         id: `send_${element.index}`,
@@ -194,16 +214,14 @@ export function actionCandidates(observation: PhoneObservation, context: Candida
   }
   candidates.push(
     { id: 'back', description: 'Go back or dismiss the current dialog.', action: { type: 'back' } },
-    { id: 'open_settings', description: 'Open or return to Android Settings.', action: { type: 'open_settings' } },
+    { id: 'open_settings', description: 'Open Android Settings. Only for Settings requests.', action: { type: 'open_settings' } },
     { id: 'wait', description: 'The screen is transitioning. Wait briefly and observe again.', action: { type: 'wait' } },
     { id: 'done', description: 'The latest request has been established by observed values on screen. Finish without further actions.', action: { type: 'done' } },
     { id: 'ask', description: 'The request or the screen is ambiguous, for example several matching contacts. Stop and ask the user.', action: { type: 'ask' } },
     { id: 'blocked', description: 'The allowed actions cannot advance the goal. Stop and hand back to the user.', action: { type: 'blocked' } },
   );
-  if (candidates.length > 255) {
-    throw new Error('This screen exceeds the decision-menu limit; no actions sent.');
-  }
-  return candidates;
+  // Keep the fixed actions when a dense screen overflows the menu.
+  return candidates.length > 255 ? [...candidates.slice(0, 249), ...candidates.slice(-6)] : candidates;
 }
 
 export async function executeAction(portal: PhoneControl, candidate: ActionCandidate, beforeInput?: () => Promise<void>) {

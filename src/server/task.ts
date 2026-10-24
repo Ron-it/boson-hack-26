@@ -38,6 +38,13 @@ type Sent = { recipient: string; message: string; packageName: string; before: C
 
 const segments = (text: string) => text.split(' | ').map(segment => segment.trim()).filter(Boolean);
 const contains = (text: string, query: string) => text.toLowerCase().includes(query.toLowerCase());
+/** Reads and model calls are safe to repeat; one hiccup should not end the task. Mutations never go through this. */
+async function retrying<T>(signal: AbortSignal, work: () => Promise<T>, attempts = 3): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try { return await work(); }
+    catch (error) { if (signal.aborted || attempt >= attempts) throw error; await delay(250 * attempt, undefined, { signal }); }
+  }
+}
 const center = (bounds: PhoneObservation['rootBounds']) => ({ x: Math.round((bounds.left + bounds.right) / 2), y: Math.round((bounds.top + bounds.bottom) / 2) });
 
 /**
@@ -523,9 +530,10 @@ export class PhoneTask {
     let minimumMs = 120;
     let previous: { id: string; fingerprint: string } | undefined;
     let unchanged = 0;
-    for (let step = 0; step < 16; step++) {
+    let dispatchFailures = 0;
+    for (let step = 0; step < 24; step++) {
       check();
-      const observation = await measure(this.timingContext(), 'settle', () => readStableScreen(this.phone, signal, minimumMs));
+      const observation = await measure(this.timingContext(), 'settle', () => retrying(signal, () => readStableScreen(this.phone, signal, minimumMs)));
       if (settings) assertSettingsScreen(observation);
       check();
       if (!settings && !request.message) {
@@ -535,11 +543,8 @@ export class PhoneTask {
       if (previous?.fingerprint === progressFingerprint(observation)) {
         unchanged++;
         history.push(`No visible change after ${previous.id}; try another sensible action.`);
-        if (unchanged >= 2) {
-          if (!settings) this.explicitlyPaused = true;
-          throw new Error(settings ? 'No progress. Please reopen Display settings and try again.'
-            : `No progress in ${observation.app.currentApp} after ${(history.at(-2) ?? previous.id).replace(/[.!?]$/, '')}. Please take over, then say continue.`);
-        }
+        if (unchanged >= 2) throw new Error(settings ? 'No progress. Please reopen Display settings and try again.'
+          : `I got stuck in ${observation.app.currentApp} after ${(history.at(-2) ?? previous.id).replace(/[.!?]$/, '')}. You can take it from here or ask again.`);
       } else unchanged = 0;
       const candidates = actionCandidates(observation, { request, apps });
       let screenshot: Uint8Array | undefined;
@@ -551,17 +556,21 @@ export class PhoneTask {
         } catch { history.push('Screenshot unavailable; do not guess unseen controls.'); }
         check();
       }
-      const decision = await measure(this.timingContext(), 'model', () => this.selector.decide({ goal, request, observation, candidates, history, ...(screenshot && { screenshot }), signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]) }));
+      const decision = await measure(this.timingContext(), 'model', () => retrying(signal, () => this.selector.decide({ goal, request, observation, candidates, history, ...(screenshot && { screenshot }), signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]) }), 2));
       check();
-      const candidate = candidates.find(item => item.id === decision.actionId);
-      if (!candidate) throw new Error('Invalid phone action; stopped');
-      const current = await this.phone.state();
+      const chosen = candidates.find(item => item.id === decision.actionId);
+      if (!chosen) throw new Error('Invalid phone action; stopped');
+      const freeText = chosen.action.type === 'type' && !chosen.action.text;
+      if (freeText && !decision.text?.trim()) { history.push(`No text supplied for ${chosen.id}; supply text with that action.`); continue; }
+      const current = await retrying(signal, () => this.phone.state());
       check();
       if (settings) assertSettingsScreen(current);
-      if (!targetIsCurrent(candidate, observation, current, { request, apps })) {
+      if (!targetIsCurrent(chosen, observation, current, { request, apps })) {
         history.push('Screen changed. Discarded the pending action and observed again.');
         continue;
       }
+      const candidate: ActionCandidate = freeText && chosen.action.type === 'type' && decision.text
+        ? { ...chosen, action: { ...chosen.action, text: decision.text }, description: `Type ${JSON.stringify(decision.text)}` } : chosen;
       const app = current.app.currentApp;
       const heading = current.elements.find(element => /:id\/(alertTitle|header_title)$/.test(element.resourceId))?.text;
       const visibleContext = heading ? ` showing ${JSON.stringify(heading.slice(0, 60))}` : '';
@@ -579,14 +588,19 @@ export class PhoneTask {
       const ambiguous = request.recipient && candidate.element ? this.ambiguousRecipient(candidates, candidate, request.recipient) : undefined;
       if (ambiguous) { this.finish('question', `Which ${request.recipient} do you mean: ${ambiguous.join(' or ')}?`, revision); return; }
       if (!settings && (candidate.action.type === 'done' || candidate.action.type === 'blocked')) {
-        if (candidate.action.type === 'done' && !request.message) {
-          const evidence = capabilityFor(current)?.outcome?.(current, request, selection);
-          if (evidence) { this.finish('completed', evidence.detail, revision, undefined, evidence); return; }
-          // No supported check establishes this outcome, so it is not reported as completed.
-          this.finish('unknown', `I stopped in ${app}${visibleContext}, but I can't check that it's done. Please have a look.`, revision); return;
+        const generic = capabilityFor(current).packageName === '*';
+        const answer = decision.text?.trim();
+        if (candidate.action.type === 'done' && generic) {
+          this.finish('completed', request.message ? `Ready in ${app}. Tap send when you're happy with it.` : answer || `Done in ${app}.`, revision); return;
         }
-        if (!request.message) this.explicitlyPaused = true;
-        this.finish('blocked', request.message ? `Not sent. I stopped in ${app} before the confirmation step.` : `I can't continue in ${app}${visibleContext}. Please take over, then say continue.`, revision); return;
+        if (candidate.action.type === 'done' && !request.message) {
+          const evidence = capabilityFor(current).outcome?.(current, request, selection);
+          if (evidence) { this.finish('completed', evidence.detail, revision, undefined, evidence); return; }
+          // A verifiable outcome was requested and is not established, so it is not reported as completed.
+          if (request.outcome) { this.finish('unknown', `I stopped in ${app}${visibleContext}, but I can't check that it's done. Please have a look.`, revision); return; }
+          this.finish('completed', answer || `Done in ${app}.`, revision); return;
+        }
+        this.finish('blocked', request.message ? `Not sent. I stopped in ${app} before the confirmation step.` : `I couldn't finish in ${app}${visibleContext}. You can take it from here or ask again.`, revision); return;
       }
       if (candidate.action.type === 'done' || candidate.action.type === 'blocked') {
         if (candidate.action.type === 'done' && request.brightness !== undefined && this.native) {
@@ -605,25 +619,36 @@ export class PhoneTask {
       this.emit({ type: 'task', state: 'working', goal, detail: candidate.description, revision });
       check();
       try { await measure(this.timingContext(), 'dispatch', () => executeAction(this.phone, candidate, async () => {
-        check();
-        const focused = await this.phone.state();
-        check();
-        if (!targetIsCurrent(candidate, current, focused, { request, apps })) throw new Error('The input target changed while focusing it.');
-        const field = focused.elements.find(element => candidate.element?.resourceId === element.resourceId
-          && candidate.element?.bounds.left === element.bounds.left && candidate.element?.bounds.top === element.bounds.top);
-        if (field?.focused === false) throw new Error('The input field does not have keyboard focus.');
+        // Focus lands a few frames after the tap; poll briefly instead of failing on the first read.
+        for (let attempt = 0; ; attempt++) {
+          check();
+          const focused = await this.phone.state();
+          check();
+          const field = focused.elements.find(element => candidate.element?.resourceId === element.resourceId
+            && candidate.element?.bounds.left === element.bounds.left && candidate.element?.bounds.top === element.bounds.top);
+          if (field?.focused !== false) return;
+          if (attempt >= 6) throw new Error('The input field did not take keyboard focus.');
+          await delay(80, undefined, { signal });
+        }
       })); }
-      catch { check(); this.finish('unknown', 'Phone action outcome is unknown. Say continue to inspect before acting again.', revision); return; }
+      catch (error) {
+        check();
+        // Every action here is reversible navigation or typing; the send path is separate. Observe again and keep going.
+        if (++dispatchFailures >= 3) { this.finish('blocked', `Phone actions keep failing in ${app}. You can take it from here or ask again.`, revision); return; }
+        history.push(`${candidate.description} failed (${error instanceof Error ? error.message : 'unknown error'}). Observe and try another way.`);
+        previous = undefined;
+        continue;
+      }
       check();
       if (candidate.action.type !== 'wait') selection = candidate.effect?.kind === 'open_content'
         ? { packageName: current.app.packageName, name: candidate.effect.name, viewer: candidate.effect.viewer } : undefined;
       if (settings) history.push(`Observed: ${JSON.stringify(observation.elements.filter(item => item.checked !== null || item.range).map(item => ({ label: item.text, checked: item.checked, range: item.range })))}`);
       history.push(candidate.description);
-      previous = { id: candidate.id, fingerprint: progressFingerprint(observation) };
+      // Waiting is not an attempt to change the screen, so it never counts toward "no progress".
+      previous = candidate.action.type === 'wait' ? undefined : { id: candidate.id, fingerprint: progressFingerprint(observation) };
       minimumMs = candidate.action.type === 'swipe' || candidate.action.type === 'launch' ? 350 : 120;
     }
-    if (!settings) this.explicitlyPaused = true;
-    throw new Error('Task reached the action limit; stopped. Please take over, then say continue.');
+    throw new Error('That took too many steps, so I stopped. You can take it from here or ask again.');
   }
 
   /** Several different visible names match the requested recipient and none matches it exactly. */

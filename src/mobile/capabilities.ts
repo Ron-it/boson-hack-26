@@ -122,8 +122,21 @@ const photosViewer: AppCapability = {
 
 const capabilities = new Map([googleMessages, settings, brightnessDialog, files('com.google.android.documentsui'), files('com.android.documentsui'), photosViewer].map(capability => [capability.packageName, capability]));
 
-/** The supported controls of the foreground app, or undefined when none are understood. */
+/** Labels whose tap may be irreversible. The generic operator leaves these for the user. */
+const irreversible = /\b(send|pay|buy|purchase|order|checkout|delete|remove|uninstall|erase|reset|submit|post|publish|transfer|place)\b/i;
+
+/** Any other app: enabled labeled controls navigate and editable fields take model-chosen text. Irreversible labels are never offered. */
+const generic: AppCapability = {
+  packageName: '*',
+  effect(element) {
+    if (!element.enabled || irreversible.test(element.text) || irreversible.test(element.description)) return undefined;
+    if (element.editable) return { kind: 'enter', field: 'text' };
+    return element.clickable && (element.text || element.description) ? { kind: 'navigate' } : undefined;
+  },
+};
+
+/** The supported controls of the foreground app. Apps without a dedicated capability get the generic one. */
 export function capabilityFor(observation: PhoneObservation) {
   // A foreign dialog must not inherit the underlying app's privileges.
-  return capabilities.get(observation.rootPackage);
+  return capabilities.get(observation.rootPackage) ?? generic;
 }

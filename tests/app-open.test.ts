@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { z } from 'zod';
 import { harness, messagesApp } from './fixtures.ts';
 
 const request = { instruction: 'Open Messages', app: 'Messages', outcome: { kind: 'app_opened' } };
@@ -144,16 +145,13 @@ for (const fields of [
   { outcome: JSON.stringify({ kind: 'search_results' }) },
   { outcome: JSON.stringify('app_opened') },
   { outcome: 'app_opened', outcomeQuery: 'unrelated search' },
-]) test(`unsupported outcome wire shape is rejected before scheduling: ${JSON.stringify(fields)}`, async () => {
+]) test(`a malformed outcome keeps the goal instead of rejecting it: ${JSON.stringify(fields)}`, async () => {
   const app = messagesApp();
   const h = await harness(app.portal);
   try {
     const result = await h.call('update_phone_task', { instruction: 'Synthetic invalid wire request', app: 'Messages', ...fields });
-    assert.deepEqual(result, { status: 'blocked', reason: 'Invalid requested result. Use outcome app_opened with app, search_results with outcomeQuery, or content_opened with outcomeName. No task was started.' });
-    assert.equal(h.appEvents.some(event => event.type === 'task'), false);
-    assert.equal(h.portalSeen.length, 0);
-    await h.until(() => h.responseRequests.find(response => JSON.stringify(response.input).includes('Invalid requested result.')), 'grounded validation feedback');
-    assert.match(h.announcements.at(-1) ?? '', /Do not greet/);
+    assert.equal(z.object({ status: z.string() }).loose().parse(result).status, 'accepted');
+    await h.until(() => h.appEvents.find(event => event.type === 'task'), 'the goal to start without the malformed outcome');
   } finally { await h.close(); }
 });
 
