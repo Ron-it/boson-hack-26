@@ -19,7 +19,7 @@ it anytime to correct it, pause it, or take over.
 
 ## How Higgs Audio is used
 
-| | |
+| Higgs | What it does in Tandem |
 | --- | --- |
 | **Higgs Realtime 1.5** <br><sub>`higgs-realtime-1.5-preview`</sub> | The whole conversation in one session. It hears you, speaks back, and drives the phone through eight tools: start or correct a task, look at the screen, confirm, guide mode, pause, continue, stop, and instant actions. |
 | **Higgs STT 3.1** <br><sub>`higgs-stt-3.1`</sub> | Transcribes your words so a "yes, send it" only counts if you actually said it. |
