@@ -41,10 +41,24 @@ type Session = ReturnType<typeof reduceSession>;
 
 const presets = [
   { id: 'quick', label: 'Quick', hint: 'Short answers. Gets it done fast.' },
-  { id: 'family', label: 'Family', hint: 'Patient, and speaks your language.' },
+  { id: 'family', label: 'Family', hint: '' },
   { id: 'hands_free', label: 'Hands-free', hint: 'Does the tapping for you.' },
 ] as const;
 const presetSchema = z.enum(presets.map(preset => preset.id)).catch('quick');
+
+/** Family speaks one of these, in the helper's voice. The helper reads `sample` aloud; it is also the transcript Boson needs. */
+const familyLanguages = [
+  { id: 'hi', label: 'हिन्दी', name: 'Hindi', sample: 'नमस्ते, कैसे हो आप? मैं आपकी मदद के लिए यहाँ हूँ। आराम से बताइए, फ़ोन पर क्या करना है? हम एक एक करके सब कर लेंगे। कोई जल्दी नहीं है। अगर कुछ समझ न आए तो मुझसे फिर पूछ लेना।' },
+  { id: 'en', label: 'English', name: 'English', sample: 'Hi, it’s me. How are you doing? I’m here to help you with your phone. Just tell me what you’d like to do, and we’ll go through it one step at a time. There’s no rush at all. If anything is unclear, just ask me again.' },
+  { id: 'es', label: 'Español', name: 'Spanish', sample: 'Hola, soy yo. ¿Cómo estás? Estoy aquí para ayudarte con el teléfono. Dime con calma qué quieres hacer y lo haremos paso a paso. No hay ninguna prisa. Si algo no queda claro, pregúntame otra vez.' },
+  { id: 'fr', label: 'Français', name: 'French', sample: 'Bonjour, c’est moi. Comment ça va ? Je suis là pour t’aider avec ton téléphone. Dis-moi tranquillement ce que tu veux faire, et on le fera étape par étape. Rien ne presse. Si quelque chose n’est pas clair, demande-moi encore.' },
+  { id: 'de', label: 'Deutsch', name: 'German', sample: 'Hallo, ich bin’s. Wie geht es dir? Ich bin hier, um dir mit dem Handy zu helfen. Sag mir in Ruhe, was du machen möchtest, und wir gehen es Schritt für Schritt durch. Es gibt keine Eile. Wenn etwas unklar ist, frag mich einfach noch einmal.' },
+  { id: 'zh', label: '中文', name: 'Mandarin', sample: '你好，是我。你最近好吗？我在这里帮你用手机。慢慢告诉我你想做什么，我们一步一步来。一点都不着急。如果有什么不明白的，再问我就好。' },
+] as const;
+type FamilyLanguage = typeof familyLanguages[number];
+const familyLanguage = (id: string): FamilyLanguage => familyLanguages.find(language => language.id === id) ?? familyLanguages[0];
+const minSeconds = 5;
+const maxSeconds = 30;
 
 /** Boson AI foundations. Green marks the primary action and a live session, nothing else. */
 const colors = {
@@ -69,8 +83,10 @@ function Button({ label, onPress, tone, disabled, icon }: { label: string; onPre
   </Pressable>;
 }
 
-function Home({ session, preset, onPreset, configured, onStart, onSettings }: { session: Session; preset: string; onPreset: (id: typeof presets[number]['id']) => void; configured: boolean; onStart: () => void; onSettings: () => void }) {
-  const hint = presets.find(option => option.id === preset)?.hint;
+function Home({ session, preset, onPreset, configured, family, onStart, onSettings }: { session: Session; preset: string; onPreset: (id: typeof presets[number]['id']) => void; configured: boolean; family: { language: FamilyLanguage; voice: boolean }; onStart: () => void; onSettings: () => void }) {
+  const hint = preset === 'family'
+    ? `Patient, and speaks ${family.language.name}${family.voice ? ' in your voice' : ''}.`
+    : presets.find(option => option.id === preset)?.hint;
   return <>
     <View style={styles.topBar}>
       <View style={styles.lockup}><Mark size={22} /><Text accessibilityRole="header" style={styles.wordmark}>Tandem</Text></View>
@@ -147,7 +163,80 @@ function Live({ session }: { session: Session }) {
   </>;
 }
 
-function Settings({ configured, onSaved, onBack }: { configured: boolean; onSaved: () => void; onBack: () => void }) {
+type Recording = { state: 'idle' } | { state: 'recording'; seconds: number } | { state: 'saving' } | { state: 'failed'; error: string };
+
+/** Pick Family's language, then record the helper reading a paragraph in it to clone their voice. */
+function FamilyVoice({ configured, language, voiceLanguage, onChange }: { configured: boolean; language: FamilyLanguage; voiceLanguage: string; onChange: () => void }) {
+  const [recording, setRecording] = useState<Recording>({ state: 'idle' });
+  const busy = recording.state === 'recording' || recording.state === 'saving';
+  const save = useCallback(async () => {
+    setRecording({ state: 'saving' });
+    const result = await Audio.saveSample(language.id, language.sample);
+    setRecording('error' in result ? { state: 'failed', error: result.error } : { state: 'idle' });
+    onChange();
+  }, [language, onChange]);
+  const seconds = recording.state === 'recording' ? recording.seconds : 0;
+  useEffect(() => {
+    if (recording.state !== 'recording') return;
+    const tick = setInterval(() => setRecording(current => current.state === 'recording' ? { state: 'recording', seconds: current.seconds + 1 } : current), 1000);
+    const limit = setTimeout(() => void save(), maxSeconds * 1000);
+    return () => { clearInterval(tick); clearTimeout(limit); };
+  }, [recording.state, save]);
+  useEffect(() => () => Audio.cancelSample(), []);
+  const record = async () => {
+    try {
+      const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+      if (granted !== PermissionsAndroid.RESULTS.GRANTED) throw new Error('Allow the microphone to record your voice.');
+      Audio.startSample();
+      setRecording({ state: 'recording', seconds: 0 });
+    } catch (e) { setRecording({ state: 'failed', error: e instanceof Error ? e.message : 'Could not start recording.' }); }
+  };
+  const recorded = voiceLanguage ? familyLanguage(voiceLanguage) : null;
+  const status = recording.state === 'recording'
+    ? <View style={styles.lockup}><View style={styles.liveDot} /><Text style={styles.liveText}>Recording {`0:${String(seconds).padStart(2, '0')}`}</Text></View>
+    : recording.state === 'saving'
+      ? <Text style={[styles.rowDetail, { color: colors.secondary, fontSize: 15 }]}>Making your voice…</Text>
+      : recorded
+        ? <View style={{ flexShrink: 1 }}>
+          <View style={styles.lockup}><Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={colors.accent} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><Path d="M5 12l5 5 9-10" /></Svg><Text style={[styles.rowDetail, { color: colors.greenSoft, fontSize: 15 }]}>Your voice</Text></View>
+          {recorded.id !== language.id && <Text style={styles.rowDetail}>Recorded in {recorded.name}</Text>}
+        </View>
+        : <Text style={[styles.rowDetail, { fontSize: 15 }]}>{configured ? 'Standard voice' : 'Pair this phone to record'}</Text>;
+  return <View style={{ paddingTop: 40 }}>
+    <Text style={[styles.section, styles.inset]}>Family voice</Text>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} accessibilityRole="radiogroup" accessibilityLabel="Family language" contentContainerStyle={[styles.tabs, styles.inset]}>
+      {familyLanguages.map(option => {
+        const checked = option.id === language.id;
+        return <Pressable key={option.id} accessibilityRole="radio" accessibilityLabel={option.name} accessibilityState={{ checked, disabled: busy }} disabled={busy}
+          onPress={() => { Audio.setFamilyLanguage(option.id); onChange(); }} style={[styles.tab, { borderBottomColor: checked ? colors.accent : 'transparent' }]}>
+          <Text style={[styles.tabText, { color: checked ? colors.strong : colors.muted }]}>{option.label}</Text>
+        </Pressable>;
+      })}
+    </ScrollView>
+    <View style={[styles.inset, { paddingTop: 20, gap: 8 }]}>
+      <Text style={styles.fieldLabel}>Read this aloud in your normal voice</Text>
+      <Text style={[styles.quoteText, { color: recording.state === 'recording' ? colors.strong : colors.text }]}>{language.sample}</Text>
+      {recording.state === 'failed' && <Text accessibilityRole="alert" style={[styles.body, { color: colors.error }]}>{recording.error}</Text>}
+      <View style={styles.saveRow}>
+        {status}
+        {recording.state === 'recording'
+          ? <SmallButton label="Done" disabled={seconds < minSeconds} onPress={() => void save()} />
+          : <SmallButton label={recorded ? 'Record again' : 'Record'} disabled={!configured || recording.state === 'saving'} onPress={() => void record()} />}
+      </View>
+      <Text style={[styles.caption, { textAlign: 'left', paddingTop: 8 }]}>Record only your own voice. Boson keeps it to speak as you.</Text>
+    </View>
+  </View>;
+}
+
+function SmallButton({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) {
+  return <Pressable accessibilityRole="button" accessibilityState={{ disabled }} disabled={disabled} onPress={onPress}
+    style={({ pressed }) => [styles.smallButton, { backgroundColor: pressed ? colors.surface : colors.raised, opacity: disabled ? 0.4 : 1 }]}>
+    <Text style={[styles.buttonText, { fontSize: 16, color: colors.strong }]}>{label}</Text>
+  </Pressable>;
+}
+
+function Settings({ config, onSaved, onFamily, onBack }: { config: ReturnType<typeof Audio.configuration>; onSaved: () => void; onFamily: () => void; onBack: () => void }) {
+  const { configured } = config;
   const [url, setUrl] = useState(() => Audio.configuration().url);
   const [token, setToken] = useState('');
   const [focus, setFocus] = useState<'url' | 'token' | null>(null);
@@ -184,6 +273,7 @@ function Settings({ configured, onSaved, onBack }: { configured: boolean; onSave
         <Text style={[styles.rowState, item.on ? { color: colors.secondary, fontWeight: '500' } : { color: colors.accent }]}>{item.on ? 'On' : 'Turn on'}</Text>
       </Pressable>)}
     </View>
+    <FamilyVoice configured={configured} language={familyLanguage(config.familyLanguage)} voiceLanguage={config.familyVoiceLanguage} onChange={onFamily} />
     <View style={[styles.inset, { paddingTop: 40, gap: 8 }]}>
       <Text style={styles.section}>Connection</Text>
       <Text style={styles.fieldLabel}>Server address</Text>
@@ -197,9 +287,7 @@ function Settings({ configured, onSaved, onBack }: { configured: boolean; onSave
         {configured
           ? <View style={styles.lockup}><Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={colors.accent} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><Path d="M5 12l5 5 9-10" /></Svg><Text style={[styles.rowDetail, { color: colors.greenSoft, fontSize: 15 }]}>Paired</Text></View>
           : <View />}
-        <Pressable accessibilityRole="button" onPress={save} style={({ pressed }) => [styles.smallButton, { backgroundColor: pressed ? colors.surface : colors.raised }]}>
-          <Text style={[styles.buttonText, { fontSize: 16, color: colors.strong }]}>Save</Text>
-        </Pressable>
+        <SmallButton label="Save" onPress={save} />
       </View>
     </View>
     <View style={[styles.main, { paddingBottom: 0 }]}>
@@ -253,8 +341,8 @@ function PhoneScreen() {
       {session.active
         ? <Live session={session} />
         : showSettings
-          ? <Settings configured={config.configured} onBack={() => setSettings(false)} onSaved={() => { setConfig(Audio.configuration()); setSettings(false); dispatch({ type: 'reset' }); }} />
-          : <Home session={session} preset={preset} onPreset={setPreset} configured={config.configured} onStart={start} onSettings={() => setSettings(true)} />}
+          ? <Settings config={config} onFamily={() => setConfig(Audio.configuration())} onBack={() => setSettings(false)} onSaved={() => { setConfig(Audio.configuration()); setSettings(false); dispatch({ type: 'reset' }); }} />
+          : <Home session={session} preset={preset} onPreset={setPreset} configured={config.configured} family={{ language: familyLanguage(config.familyLanguage), voice: !!config.familyVoiceLanguage }} onStart={start} onSettings={() => setSettings(true)} />}
     </ScrollView>
   </KeyboardAvoidingView>;
 }
