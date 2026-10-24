@@ -116,3 +116,61 @@ test('an already foreground app is freshly checked after package resolution and 
     assert.ok(resolved >= 0 && h.portalSeen.slice(resolved + 1).includes('state'), 'completion needs a fresh read after resolving the app');
   } finally { await h.close(); }
 });
+
+test('observed provider JSON-encoded object normalizes to the typed app-open outcome', async () => {
+  const app = messagesApp();
+  const h = await harness(app.portal);
+  try {
+    const accepted = await h.call('update_phone_task', { instruction: 'Open Messages', app: 'Messages', outcome: JSON.stringify({ kind: 'app_opened' }) });
+    assert.deepEqual(accepted, { status: 'accepted', note: 'Working on the complete request. Wait for the operator outcome; do not resubmit.' });
+    const completed = await h.until(() => h.appEvents.find(event => event.type === 'task' && event.state === 'completed'), 'normalized app-open result');
+    assert.deepEqual(completed.evidence, { kind: 'app_opened', packageName: 'com.google.android.apps.messaging', detail: 'Observed Messages in the foreground.' });
+  } finally { await h.close(); }
+});
+
+test('flat provider enum opens the app without instruction-text guessing', async () => {
+  const app = messagesApp();
+  const h = await harness(app.portal);
+  try {
+    await h.call('update_phone_task', { instruction: 'Synthetic explicit result', app: 'Messages', outcome: 'app_opened' });
+    const completed = await h.until(() => h.appEvents.find(event => event.type === 'task' && event.state === 'completed'), 'flat app-open result');
+    assert.deepEqual(completed.evidence, { kind: 'app_opened', packageName: 'com.google.android.apps.messaging', detail: 'Observed Messages in the foreground.' });
+  } finally { await h.close(); }
+});
+
+for (const fields of [
+  { outcome: 'send_message' },
+  { outcome: JSON.stringify({ kind: 'app_opened', uri: 'synthetic:unsupported' }) },
+  { outcome: JSON.stringify({ kind: 'search_results' }) },
+  { outcome: JSON.stringify('app_opened') },
+  { outcome: 'app_opened', outcomeQuery: 'unrelated search' },
+]) test(`unsupported outcome wire shape is rejected before scheduling: ${JSON.stringify(fields)}`, async () => {
+  const app = messagesApp();
+  const h = await harness(app.portal);
+  try {
+    const result = await h.call('update_phone_task', { instruction: 'Synthetic invalid wire request', app: 'Messages', ...fields });
+    assert.deepEqual(result, { status: 'blocked', reason: 'Invalid requested result. Use outcome app_opened with app, search_results with outcomeQuery, or content_opened with outcomeName. No task was started.' });
+    assert.equal(h.appEvents.some(event => event.type === 'task'), false);
+    assert.equal(h.portalSeen.length, 0);
+    await h.until(() => h.responseRequests.find(response => JSON.stringify(response.input).includes('Invalid requested result.')), 'grounded validation feedback');
+    assert.match(h.announcements.at(-1) ?? '', /Do not greet/);
+  } finally { await h.close(); }
+});
+
+for (const [kind, field, expected] of [
+  ['search_results', 'outcomeQuery', { kind: 'search_results', query: 'Synthetic search' }],
+  ['content_opened', 'outcomeName', { kind: 'content_opened', name: 'Synthetic search' }],
+] as const) test(`flat ${kind} keeps its typed result instead of reducing the goal to app opening`, async () => {
+  const app = messagesApp();
+  let observed: unknown;
+  const h = await harness(app.portal, { selector: { decide: async ({ request }) => {
+    observed = request?.outcome;
+    return { actionId: 'blocked', confidence: null, returnedModel: null };
+  } } });
+  try {
+    await h.call('update_phone_task', { instruction: 'Synthetic requested result', app: 'Messages', outcome: kind, [field]: 'Synthetic search' });
+    await h.until(() => observed, 'normalized typed result');
+    assert.deepEqual(observed, expected);
+    assert.equal(h.appEvents.some(event => event.state === 'completed'), false);
+  } finally { await h.close(); }
+});
