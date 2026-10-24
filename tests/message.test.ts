@@ -244,41 +244,50 @@ test('voice asks with the concrete recipient and message, and sends only after t
   const phone = await harness(app.portal, { selector: navigator });
   try {
     z.object({ status: z.literal('accepted') }).loose().parse(await phone.call('update_phone_task', voiceRequest));
-    const proposal = await proposalOf(phone);
-    const asked = await phone.until(() => phone.announcements.find(text => text.includes(proposal.id)), 'the spoken confirmation');
+    await proposalOf(phone);
+    const asked = await phone.until(() => phone.announcements.find(text => text.includes('confirm_phone_action')), 'the spoken confirmation');
     assert.match(asked, /Avery Testcontact/);
     assert.match(asked, /Synthetic hello from the test/);
 
-    const unprompted = z.object({ status: z.literal('blocked'), reason: z.string() }).parse(await phone.call('confirm_phone_action', { proposalId: proposal.id, approve: true }));
+    const unprompted = z.object({ status: z.literal('blocked'), reason: z.string() }).parse(await phone.call('confirm_phone_action', { answer: 'yes' }));
     assert.match(unprompted.reason, /user/i, 'the model cannot approve before the user has answered');
     assert.deepEqual(app.sent, []);
 
     phone.speak();
-    z.object({ status: z.literal('accepted') }).loose().parse(await phone.call('confirm_phone_action', { proposalId: proposal.id, approve: true }));
+    z.object({ status: z.literal('accepted') }).loose().parse(await phone.call('confirm_phone_action', { answer: 'yes' }));
     await phone.until(() => phone.appEvents.map(event => taskEvent.safeParse(event)).find(event => event.success && event.data.state === 'completed'), 'the observed send');
     assert.deepEqual(app.sent, [{ recipient: 'Avery Testcontact', text: 'Synthetic hello from the test' }]);
-    z.object({ status: z.literal('blocked') }).loose().parse(await phone.call('confirm_phone_action', { proposalId: proposal.id, approve: true }));
+    z.object({ status: z.literal('blocked') }).loose().parse(await phone.call('confirm_phone_action', { answer: 'yes' }));
     assert.equal(app.sent.length, 1);
   } finally { await phone.close(); }
 });
 
 test('a clear spoken answer overrides the yes or no the voice model relays', async () => {
-  for (const [said, relayed, sends] of [['Yes.', 'no', 1], ['No, cancel that.', 'yes', 0]] as const) {
+  for (const [said, relayed, sends] of [['Yes.', 'no', 1], ['No, cancel that.', 'yes', 0], ['हाँ, भेज दो।', 'no', 1], ['नहीं, रुको।', 'yes', 0]] as const) {
     const app = messagesApp();
     const phone = await harness(app.portal, { selector: navigator });
     try {
       await phone.call('update_phone_task', voiceRequest);
-      const proposal = await proposalOf(phone);
-      await phone.until(() => phone.announcements.find(text => text.includes(proposal.id)), 'the spoken confirmation');
+      await proposalOf(phone);
+      await phone.until(() => phone.announcements.find(text => text.includes('confirm_phone_action')), 'the spoken confirmation');
       phone.speak();
       phone.provider({ type: 'conversation.item.input_audio_transcription.completed', transcript: said });
       // The server relays the transcript to the app once it has recorded it.
       await phone.until(() => phone.appEvents.find(event => event.type === 'conversation.item.input_audio_transcription.completed' && event.transcript === said), 'the transcript to arrive');
-      await phone.call('confirm_phone_action', { proposalId: proposal.id, answer: relayed });
+      await phone.call('confirm_phone_action', { answer: relayed });
       await phone.until(() => phone.appEvents.map(event => taskEvent.safeParse(event)).find(event => event.success && ['completed', 'declined'].includes(event.data.state)), 'the answer to settle');
       assert.equal(app.sent.length, sends, `${said} with a relayed ${relayed}`);
     } finally { await phone.close(); }
   }
+});
+
+test('a confirmation nobody asked for is refused with a way out instead of a re-ask', async () => {
+  const phone = await harness(messagesApp().portal, { selector: navigator });
+  try {
+    phone.speak();
+    const output = z.object({ status: z.literal('blocked'), reason: z.string() }).parse(await phone.call('confirm_phone_action', { answer: 'yes' }));
+    assert.match(output.reason, /Nothing is waiting.*update_phone_task/);
+  } finally { await phone.close(); }
 });
 
 test('a confirmation queued while the voice is busy is still asked aloud before it can be approved', async () => {
@@ -289,13 +298,13 @@ test('a confirmation queued while the voice is busy is still asked aloud before 
     // The user says something else; its reply is still in progress when the proposal arrives.
     phone.speak();
     phone.provider({ type: 'response.created', response: { id: 'chatter' } });
-    const proposal = await proposalOf(phone);
-    assert.equal(phone.announcements.some(text => text.includes(proposal.id)), false);
-    z.object({ status: z.literal('blocked') }).loose().parse(await phone.call('confirm_phone_action', { proposalId: proposal.id, approve: true }));
+    await proposalOf(phone);
+    assert.equal(phone.announcements.some(text => text.includes('confirm_phone_action')), false);
+    z.object({ status: z.literal('blocked') }).loose().parse(await phone.call('confirm_phone_action', { answer: 'yes' }));
     phone.provider({ type: 'response.done', response: { id: 'chatter', status: 'completed' } });
-    await phone.until(() => phone.announcements.find(text => text.includes(proposal.id)), 'the queued confirmation to be asked');
+    await phone.until(() => phone.announcements.find(text => text.includes('confirm_phone_action')), 'the queued confirmation to be asked');
     phone.speak();
-    z.object({ status: z.literal('accepted') }).loose().parse(await phone.call('confirm_phone_action', { proposalId: proposal.id, approve: true }));
+    z.object({ status: z.literal('accepted') }).loose().parse(await phone.call('confirm_phone_action', { answer: 'yes' }));
     await phone.until(() => app.sent.length === 1 || undefined, 'the send');
   } finally { await phone.close(); }
 });
@@ -305,14 +314,14 @@ test('guide mode cannot approve a pending send', async () => {
   const phone = await harness(app.portal, { selector: navigator });
   try {
     await phone.call('update_phone_task', voiceRequest);
-    const proposal = await proposalOf(phone);
+    await proposalOf(phone);
     phone.speak();
     await phone.call('set_help_mode', { mode: 'guide' });
-    const output = z.object({ status: z.literal('blocked'), reason: z.string() }).parse(await phone.call('confirm_phone_action', { proposalId: proposal.id, approve: true }));
+    const output = z.object({ status: z.literal('blocked'), reason: z.string() }).parse(await phone.call('confirm_phone_action', { answer: 'yes' }));
     assert.match(output.reason, /Guide mode/);
     await phone.call('set_help_mode', { mode: 'do' });
     phone.speak();
-    z.object({ status: z.literal('blocked') }).loose().parse(await phone.call('confirm_phone_action', { proposalId: proposal.id, approve: true }));
+    z.object({ status: z.literal('blocked') }).loose().parse(await phone.call('confirm_phone_action', { answer: 'yes' }));
     await new Promise(resolve => setTimeout(resolve, 100));
     assert.deepEqual(app.sent, [], 'switching to guide mode withdrew the confirmation');
   } finally { await phone.close(); }
