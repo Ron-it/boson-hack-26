@@ -55,6 +55,12 @@ The assistant's assertion that a phone task is finished. It needs supporting
 observed results and may still need an independent check.
 _Avoid_: Verified completion, without that evidence.
 
+**Family voice**:
+A helper's voice cloned from a short paragraph they read aloud on the phone, in
+the language Family mode speaks. It belongs to the Boson key of the controller
+that created it.
+_Avoid_: Voice preset, when referring to the cloned voice.
+
 **Unplugged demo**:
 A complete spoken phone task on the real phone without a laptop connection.
 The phone may still use the internet and a hosted server.

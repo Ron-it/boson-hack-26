@@ -55,7 +55,9 @@ it from the service's Environment tab along with the service URL.
 
 **4. Talk**
 
-Pick a voice, tap **Start talking**, and try:
+Pick a voice, tap **Start talking**, and try the lines below. For **Family**,
+first open Settings → **Family voice**, pick a language and read the paragraph
+aloud, so help comes in your voice.
 
 > "Set brightness to 70% and turn on Night Light." … "Actually, leave Night Light off."<br>
 > "Text Maya that I'm running late."<br>
@@ -120,6 +122,7 @@ client and operator
 - One phone and one voice session per controller. No accounts or task history.
 - Render's free plan sleeps when idle; the first connection can take a minute.
 - A controller redeploy ends the voice session. Start again from the phone.
+- A family voice belongs to the controller's Boson key. After changing the key, record it again.
 - Speaker echo cancellation varies by phone. Headphones work best.
 - Apps with few accessibility labels are slower; Tandem falls back to a screenshot.
 - Touching the screen does not pause Tandem yet. Say "pause" first.

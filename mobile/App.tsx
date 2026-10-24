@@ -291,7 +291,7 @@ function Settings({ config, onSaved, onFamily, onBack }: { config: ReturnType<ty
       </View>
     </View>
     <View style={[styles.main, { paddingBottom: 0 }]}>
-      <Text style={[styles.caption, { textAlign: 'left' }]}>Tandem 1.0 · Voice by Boson Higgs Realtime. Audio goes to Boson while you talk.</Text>
+      <Text style={[styles.caption, { textAlign: 'left' }]}>Tandem 1.1 · Voice by Boson Higgs Realtime. Audio goes to Boson while you talk.</Text>
     </View>
   </>;
 }
